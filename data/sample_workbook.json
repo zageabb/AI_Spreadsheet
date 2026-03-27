@@ -1,0 +1,14 @@
+{
+  "name": "Sample Workbook",
+  "active_sheet_index": 0,
+  "sheets": [
+    {
+      "name": "Sheet1",
+      "cells": {
+        "A1": {"value": 10, "formula": null, "formatting": {}},
+        "A2": {"value": 20, "formula": null, "formatting": {}},
+        "A3": {"value": 30.0, "formula": "=SUM(10,20)", "formatting": {}}
+      }
+    }
+  ]
+}
