@@ -30,12 +30,13 @@ AI_Spreadsheet/
 
 - Desktop shell (`PySide6`) with:
   - main window
-  - menu bar
-  - toolbar
-  - formula bar
-  - worksheet grid
-  - sheet tabs
-  - status bar
+  - menu bar (file/edit/sheet actions)
+  - toolbar groups for file and edit actions
+  - formula bar with active-cell name box
+  - worksheet grid with row/column headers
+  - sheet tabs with add/rename/duplicate/delete actions
+  - status bar with cell position and edit mode indicators
+  - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
 - Starter formula engine scaffold with dynamic built-in formula registration.
