@@ -1,0 +1,34 @@
+from __future__ import annotations
+
+from app.storage import JsonWorkbookStorage, get_workbook_storage
+from app.storage.postgres_config import PostgresConfig
+
+
+def test_postgres_config_from_env(monkeypatch):
+    monkeypatch.setenv("POSTGRES_HOST", "db.internal")
+    monkeypatch.setenv("POSTGRES_PORT", "5440")
+    monkeypatch.setenv("POSTGRES_DB", "sheet")
+    monkeypatch.setenv("POSTGRES_USER", "sheet_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "secret")
+    monkeypatch.setenv("POSTGRES_SSLMODE", "require")
+
+    config = PostgresConfig.from_env()
+
+    assert config.host == "db.internal"
+    assert config.port == 5440
+    assert config.database == "sheet"
+    assert config.user == "sheet_user"
+    assert config.password == "secret"
+    assert config.sslmode == "require"
+
+
+def test_get_workbook_storage_defaults_to_json(monkeypatch):
+    monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+    storage = get_workbook_storage()
+    assert isinstance(storage, JsonWorkbookStorage)
+
+
+def test_get_workbook_storage_postgres_selection_imports_adapter(monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    storage = get_workbook_storage()
+    assert storage.__class__.__name__ == "PostgresWorkbookStorage"
