@@ -2,7 +2,7 @@
 
 AI Spreadsheet is a **desktop-first Python spreadsheet application scaffold** built with **PySide6** and modular architecture.
 
-> ⚠️ **Scaffold status:** This repository currently provides a production-minded MVP skeleton and placeholders for advanced features (auth, permissions, PostgreSQL backend, collaboration, and email notifications).
+> ⚠️ **Scaffold status:** This repository currently provides a production-minded MVP skeleton and placeholders for some advanced features (auth flows, collaboration server, email notifications), while JSON and PostgreSQL workbook storage backends are now both available behind a shared storage abstraction.
 
 ## Project tree
 
@@ -39,6 +39,7 @@ AI_Spreadsheet/
   - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
+- PostgreSQL storage adapter using normalized schema in `db/schema.sql`.
 - JSON workbook schema documentation in `docs/workbook_json_structure.md`.
 - Excel/CSV conversion service for practical workbook interchange:
   - import `.xlsx` with multi-sheet support
@@ -51,9 +52,7 @@ AI_Spreadsheet/
   - runtime plugin function loading from `plugins/`
 - Plugin formula loading from `plugins/`.
 - Placeholder/scaffold modules for:
-  - PostgreSQL storage
-  - Authentication
-  - Permissions
+  - Authentication flows
   - Collaboration server
   - Email notifications
 
@@ -72,6 +71,71 @@ Run tests:
 pytest -q
 ```
 
+## Storage backend switching
+
+Storage adapters are selected via `STORAGE_BACKEND`:
+
+- `json` (default, local-first)
+- `postgres` (alternative backend)
+
+Use `app.storage.get_workbook_storage()` to resolve the adapter from env-based configuration.
+
+```bash
+# default local-first mode
+STORAGE_BACKEND=json
+
+# PostgreSQL mode
+STORAGE_BACKEND=postgres
+```
+
+## PostgreSQL backend setup
+
+### 1) Configure environment
+
+Copy the sample env file and update database credentials:
+
+```bash
+cp .env.example .env
+```
+
+Required PostgreSQL env vars (no hardcoded credentials in code):
+
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_SSLMODE`
+
+### 2) Initialize schema
+
+```bash
+python -m db.init_postgres
+```
+
+This applies `db/schema.sql`, which includes tables for:
+
+- `users`
+- `workbooks`
+- `sheets`
+- `cells`
+- `workbook_permissions`
+- `workbook_sessions`
+
+### 3) Migrate existing JSON files (optional)
+
+```bash
+python -m db.json_to_postgres
+```
+
+By default this migrates `data/*.json` and stores each workbook in PostgreSQL using the JSON filename stem as the workbook `external_key`.
+
+## PostgreSQL authorization support
+
+`app/permissions/service.py` now includes `PostgresPermissionService` for role checks against PostgreSQL-backed workbooks (`owner` / `editor` / `viewer`).
+
+This keeps authorization logic separate from UI and separate from workbook model/business logic.
+
 ## Formula functions and plugins
 
 Built-in formula modules live in `app/formulas/` and are loaded dynamically when the app starts.  
@@ -89,16 +153,6 @@ Example plugin function:
 def DOUBLE(value):  # usable as =DOUBLE(21)
     return float(value) * 2
 ```
-
-## Notes on scaffolded features
-
-- `app/storage/postgres_storage.py`: interface placeholder only.
-- `app/auth/service.py`: login/registration flow placeholder only.
-- `app/permissions/service.py`: role-check workflows placeholder only.
-- `app/services/email_service.py`: outbound email placeholder only.
-- `server/main.py`: collaboration API skeleton with health endpoint only.
-
-These are intentionally separated into modules so future milestones can be implemented without re-architecting the desktop app.
 
 ## Excel/CSV compatibility notes (practical, not perfect parity)
 
