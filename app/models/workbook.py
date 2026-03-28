@@ -9,7 +9,16 @@ from typing import Any
 from app.models.sheet import Worksheet
 
 
-WORKBOOK_SCHEMA_VERSION = "1.0"
+WORKBOOK_SCHEMA_VERSION = "1.1"
+DEFAULT_PERMISSIONS = {
+    "owner": None,
+    "shared_with": [],
+}
+
+
+def _utc_timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp suitable for metadata fields."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(slots=True)
@@ -38,7 +47,7 @@ class Workbook:
 
     def to_dict(self) -> dict[str, Any]:
         """Return the workbook as a JSON-serializable dictionary."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = _utc_timestamp()
 
         metadata = {
             "schema_version": WORKBOOK_SCHEMA_VERSION,
@@ -47,27 +56,45 @@ class Workbook:
             **self.metadata,
         }
 
+        permissions = {
+            **DEFAULT_PERMISSIONS,
+            **self.permissions,
+        }
+
+        if not self.sheets:
+            self.add_sheet("Sheet1")
+
+        self.active_sheet_index = max(0, min(self.active_sheet_index, len(self.sheets) - 1))
+
         return {
             "name": self.name,
             "active_sheet_index": self.active_sheet_index,
             "metadata": metadata,
-            "permissions": dict(self.permissions),
+            "permissions": permissions,
             "sheets": [sheet.to_dict() for sheet in self.sheets],
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "Workbook":
         """Create a workbook from a JSON dictionary payload."""
-        metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
-        permissions = (
-            payload.get("permissions", {}) if isinstance(payload.get("permissions", {}), dict) else {}
-        )
+        metadata = payload.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        permissions = payload.get("permissions", {})
+        if not isinstance(permissions, dict):
+            permissions = {}
+
+        try:
+            active_sheet_index = int(payload.get("active_sheet_index", 0) or 0)
+        except (TypeError, ValueError):
+            active_sheet_index = 0
 
         workbook = cls(
             name=str(payload.get("name") or "Untitled"),
-            active_sheet_index=int(payload.get("active_sheet_index", 0) or 0),
+            active_sheet_index=active_sheet_index,
             metadata=metadata,
-            permissions=permissions,
+            permissions={**DEFAULT_PERMISSIONS, **permissions},
         )
 
         raw_sheets = payload.get("sheets", [])

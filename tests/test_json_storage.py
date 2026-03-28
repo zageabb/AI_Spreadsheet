@@ -1,4 +1,4 @@
-"""Tests for JSON storage scaffold."""
+"""Tests for JSON workbook storage."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ def test_save_and_load_roundtrip(tmp_path):
 
     assert loaded.name == "Finance Q1"
     assert loaded.metadata["owner"] == "ana@example.com"
+    assert loaded.metadata["schema_version"] == "1.1"
     assert loaded.permissions["owner"] == "ana@example.com"
     assert loaded.sheets[0].cells["A1"].formatting["number_format"] == "currency"
     assert loaded.sheets[0].cells["B1"].formula == "=A1*0.1"
@@ -72,3 +73,61 @@ def test_invalid_sheet_cells_type_raises(tmp_path):
     storage = JsonWorkbookStorage()
     with pytest.raises(StorageValidationError):
         storage.load_workbook(str(target))
+
+
+def test_invalid_formula_without_equals_raises(tmp_path):
+    target = tmp_path / "bad_workbook.json"
+    target.write_text(
+        json.dumps(
+            {
+                "name": "BadFormula",
+                "active_sheet_index": 0,
+                "sheets": [
+                    {
+                        "name": "Sheet1",
+                        "cells": {
+                            "A1": {
+                                "value": 10,
+                                "formula": "A2+1",
+                                "formatting": {},
+                            }
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    storage = JsonWorkbookStorage()
+    with pytest.raises(StorageValidationError):
+        storage.load_workbook(str(target))
+
+
+def test_missing_file_raises_validation_error(tmp_path):
+    storage = JsonWorkbookStorage()
+    missing_path = tmp_path / "missing.json"
+
+    with pytest.raises(StorageValidationError):
+        storage.load_workbook(str(missing_path))
+
+
+def test_defaults_permissions_when_not_present(tmp_path):
+    target = tmp_path / "minimal_workbook.json"
+    target.write_text(
+        json.dumps(
+            {
+                "name": "Minimal",
+                "active_sheet_index": 0,
+                "sheets": [{"name": "Sheet1", "cells": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    storage = JsonWorkbookStorage()
+    loaded = storage.load_workbook(str(target))
+
+    assert "owner" in loaded.permissions
+    assert "shared_with" in loaded.permissions
+    assert loaded.permissions["shared_with"] == []
