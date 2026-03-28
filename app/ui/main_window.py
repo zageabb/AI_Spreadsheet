@@ -30,6 +30,7 @@ from app.engine.formula_engine import FormulaEngine
 from app.engine.plugin_loader import PluginLoader
 from app.formulas.registry import register_builtin_functions
 from app.models.workbook import Workbook
+from app.services.file_conversion import WorkbookConversionError, WorkbookFileConverter
 from app.storage.json_storage import JsonWorkbookStorage
 
 
@@ -45,6 +46,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self.storage = JsonWorkbookStorage()
+        self.file_converter = WorkbookFileConverter()
         self.workbook = Workbook(name="Untitled")
         self.workbook.add_sheet("Sheet1")
         self.current_file_path: Optional[str] = None
@@ -74,6 +76,12 @@ class MainWindow(QMainWindow):
         self.action_open.setShortcut(QKeySequence.StandardKey.Open)
         self.action_open.triggered.connect(self._open_workbook)
 
+        self.action_import_excel = QAction("Import Excel (.xlsx)...", self)
+        self.action_import_excel.triggered.connect(self._import_excel)
+
+        self.action_import_csv = QAction("Import CSV (.csv)...", self)
+        self.action_import_csv.triggered.connect(self._import_csv)
+
         self.action_save = QAction("Save", self)
         self.action_save.setShortcut(QKeySequence.StandardKey.Save)
         self.action_save.triggered.connect(self._save_workbook)
@@ -81,6 +89,12 @@ class MainWindow(QMainWindow):
         self.action_save_as = QAction("Save As...", self)
         self.action_save_as.setShortcut(QKeySequence.StandardKey.SaveAs)
         self.action_save_as.triggered.connect(self._save_workbook_as)
+
+        self.action_export_excel = QAction("Export Excel (.xlsx)...", self)
+        self.action_export_excel.triggered.connect(self._export_excel)
+
+        self.action_export_csv = QAction("Export CSV (.csv)...", self)
+        self.action_export_csv.triggered.connect(self._export_csv)
 
         self.action_copy = QAction("Copy", self)
         self.action_copy.setShortcut(QKeySequence.StandardKey.Copy)
@@ -122,8 +136,14 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.action_new)
         file_menu.addAction(self.action_open)
         file_menu.addSeparator()
+        file_menu.addAction(self.action_import_excel)
+        file_menu.addAction(self.action_import_csv)
+        file_menu.addSeparator()
         file_menu.addAction(self.action_save)
         file_menu.addAction(self.action_save_as)
+        file_menu.addSeparator()
+        file_menu.addAction(self.action_export_excel)
+        file_menu.addAction(self.action_export_csv)
 
         edit_menu = menu.addMenu("Edit")
         edit_menu.addAction(self.action_undo)
@@ -580,6 +600,74 @@ class MainWindow(QMainWindow):
         self.current_file_path = path
         self._refresh_window_title()
         self.statusBar().showMessage(f"Saved {path}", 2000)
+
+    def _import_excel(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import Excel Workbook", "", "Excel Workbook (*.xlsx)")
+        if not path:
+            return
+
+        try:
+            self.workbook = self.file_converter.import_xlsx(path)
+        except WorkbookConversionError as error:
+            QMessageBox.warning(self, "Excel Import Failed", str(error))
+            return
+
+        self.current_file_path = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._rebuild_sheet_tabs()
+        self._refresh_window_title()
+        self.statusBar().showMessage(f"Imported Excel file: {path}", 2500)
+        self._refresh_action_states()
+
+    def _import_csv(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import CSV File", "", "CSV File (*.csv)")
+        if not path:
+            return
+
+        try:
+            self.workbook = self.file_converter.import_csv(path)
+        except WorkbookConversionError as error:
+            QMessageBox.warning(self, "CSV Import Failed", str(error))
+            return
+
+        self.current_file_path = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._rebuild_sheet_tabs()
+        self._refresh_window_title()
+        self.statusBar().showMessage(f"Imported CSV file: {path}", 2500)
+        self._refresh_action_states()
+
+    def _export_excel(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export as Excel", "", "Excel Workbook (*.xlsx)")
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path = f"{path}.xlsx"
+
+        try:
+            self.file_converter.export_xlsx(path, self.workbook)
+        except WorkbookConversionError as error:
+            QMessageBox.warning(self, "Excel Export Failed", str(error))
+            return
+
+        self.statusBar().showMessage(f"Exported Excel file: {path}", 2500)
+
+    def _export_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Export as CSV", "", "CSV File (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path = f"{path}.csv"
+
+        try:
+            self.file_converter.export_csv(path, self.workbook, sheet_index=self.workbook.active_sheet_index)
+        except WorkbookConversionError as error:
+            QMessageBox.warning(self, "CSV Export Failed", str(error))
+            return
+
+        self.statusBar().showMessage(f"Exported CSV file: {path}", 2500)
 
     def _add_sheet(self) -> None:
         base_name = f"Sheet{len(self.workbook.sheets) + 1}"

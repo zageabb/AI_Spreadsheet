@@ -40,6 +40,11 @@ AI_Spreadsheet/
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
 - JSON workbook schema documentation in `docs/workbook_json_structure.md`.
+- Excel/CSV conversion service for practical workbook interchange:
+  - import `.xlsx` with multi-sheet support
+  - export `.xlsx` with sheet name sanitization for Excel constraints
+  - import `.csv` into a single worksheet
+  - export active sheet to `.csv`
 - Starter formula engine with:
   - same-sheet references (e.g., `=A1+B2`)
   - dynamic discovery of built-in `builtin_*.py` formula modules
@@ -94,3 +99,37 @@ def DOUBLE(value):  # usable as =DOUBLE(21)
 - `server/main.py`: collaboration API skeleton with health endpoint only.
 
 These are intentionally separated into modules so future milestones can be implemented without re-architecting the desktop app.
+
+## Excel/CSV compatibility notes (practical, not perfect parity)
+
+The app provides a practical import/export layer in `app/services/file_conversion.py` and intentionally does **not** claim full Excel parity.
+
+### `.xlsx` import currently preserves (where available)
+- Workbook sheet order and sheet names.
+- Cell values.
+- Cell formulas beginning with `=`.
+- Cached formula results when present in the source workbook.
+- Core formatting fields:
+  - number format
+  - bold / italic / underline
+  - font color
+  - solid fill color
+  - horizontal/vertical alignment
+  - wrap text
+
+### `.xlsx` export currently preserves
+- Sheet names (sanitized for Excel-invalid characters and uniqueness).
+- Cell values and formulas.
+- The same core formatting fields listed above when they exist in workbook cell formatting payloads.
+
+### `.csv` import/export behavior
+- CSV is handled as **single-sheet** interchange.
+- Import creates one worksheet from the CSV rows/columns.
+- Export writes one worksheet (the active sheet in the UI).
+- Formula-like text beginning with `=` is preserved as formulas.
+- Scalar parsing on CSV import is best-effort (integers, floats, booleans, otherwise text).
+
+### Known limitations
+- No support yet for pivot tables, charts, merged cells, comments, validation rules, macros, images, frozen panes, or conditional formatting rules.
+- Formula recalculation depends on this app's formula engine; Excel-only functions may not evaluate equivalently.
+- Cached formula values in imported `.xlsx` files depend on what was stored by the originating spreadsheet application.
