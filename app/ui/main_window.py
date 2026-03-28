@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         before_state = {"formula": cell.formula, "value": cell.value}
 
         if user_text.startswith("="):
-            result = self.formula_engine.evaluate(user_text)
+            result = self._evaluate_formula_for_cell(sheet, address, user_text)
             cell.formula = user_text
             cell.value = result
             display_value = "" if result is None else str(result)
@@ -293,9 +293,58 @@ class MainWindow(QMainWindow):
         if record_undo:
             self._push_undo([{"row": row, "col": col, "before": before_state, "after": after_state}])
 
+        self._recalculate_sheet_formulas(sheet)
         self.formula_bar.setText(user_text)
         self.status_mode.setText("Mode: Edit")
         self.statusBar().showMessage(f"Updated {address}", 2000)
+
+    def _evaluate_formula_for_cell(self, sheet, address: str, formula: str, active_stack: set[str] | None = None) -> Any:
+        visited = active_stack or set()
+        normalized_address = address.upper()
+        if normalized_address in visited:
+            return "#CIRC!"
+
+        visited.add(normalized_address)
+        result = self.formula_engine.evaluate(
+            formula,
+            context={"get_cell_value": lambda ref: self._resolve_cell_value(sheet, ref, visited)},
+        )
+        visited.remove(normalized_address)
+        return result
+
+    def _resolve_cell_value(self, sheet, address: str, active_stack: set[str]) -> Any:
+        normalized_address = address.upper()
+        if normalized_address in active_stack:
+            return "#CIRC!"
+
+        cell = sheet.get_cell(normalized_address)
+        if cell.formula:
+            computed = self._evaluate_formula_for_cell(sheet, normalized_address, cell.formula, active_stack)
+            cell.value = computed
+            return computed
+        if cell.value in (None, ""):
+            return 0.0
+        return cell.value
+
+    def _recalculate_sheet_formulas(self, sheet) -> None:
+        grid = self._current_grid()
+        if grid is None:
+            return
+
+        for address, cell in sheet.cells.items():
+            if not cell.formula:
+                continue
+            result = self._evaluate_formula_for_cell(sheet, address, cell.formula)
+            cell.value = result
+            row, col = self._address_to_index(address)
+            if not (0 <= row < self.ROW_COUNT and 0 <= col < self.COL_COUNT):
+                continue
+
+            self._suppress_cell_events = True
+            item = grid.item(row, col) or QTableWidgetItem("")
+            item.setText("" if result is None else str(result))
+            grid.setItem(row, col, item)
+            self._suppress_cell_events = False
 
     def _apply_formula_to_current_cell(self) -> None:
         grid = self._current_grid()
