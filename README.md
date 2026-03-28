@@ -39,6 +39,7 @@ AI_Spreadsheet/
   - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
+- JSON workbook schema documentation in `docs/workbook_json_structure.md`.
 - Starter formula engine with:
   - same-sheet references (e.g., `=A1+B2`)
   - dynamic discovery of built-in `builtin_*.py` formula modules
