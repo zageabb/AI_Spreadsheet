@@ -11,10 +11,12 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
-    QLabel,
+    QPushButton,
     QStatusBar,
     QTabWidget,
     QTableWidget,
@@ -61,6 +63,7 @@ class MainWindow(QMainWindow):
         self._build_central_ui()
         self._build_status_bar()
         self._refresh_window_title()
+        self._refresh_action_states()
 
     def _create_actions(self) -> None:
         self.action_new = QAction("New", self)
@@ -95,6 +98,10 @@ class MainWindow(QMainWindow):
         self.action_redo.setShortcut(QKeySequence.StandardKey.Redo)
         self.action_redo.triggered.connect(self._redo)
 
+        self.action_edit_cell = QAction("Edit Cell", self)
+        self.action_edit_cell.setShortcut(QKeySequence(Qt.Key.Key_F2))
+        self.action_edit_cell.triggered.connect(self._edit_current_cell)
+
         self.action_add_sheet = QAction("Add Sheet", self)
         self.action_add_sheet.setShortcut("Ctrl+Shift+N")
         self.action_add_sheet.triggered.connect(self._add_sheet)
@@ -124,6 +131,8 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(self.action_copy)
         edit_menu.addAction(self.action_paste)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.action_edit_cell)
 
         sheet_menu = menu.addMenu("Sheet")
         sheet_menu.addAction(self.action_add_sheet)
@@ -134,6 +143,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         file_toolbar = QToolBar("File")
         file_toolbar.setMovable(False)
+        file_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(file_toolbar)
         file_toolbar.addAction(self.action_new)
         file_toolbar.addAction(self.action_open)
@@ -141,12 +151,19 @@ class MainWindow(QMainWindow):
 
         edit_toolbar = QToolBar("Edit")
         edit_toolbar.setMovable(False)
+        edit_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(edit_toolbar)
         edit_toolbar.addAction(self.action_undo)
         edit_toolbar.addAction(self.action_redo)
         edit_toolbar.addSeparator()
         edit_toolbar.addAction(self.action_copy)
         edit_toolbar.addAction(self.action_paste)
+
+        sheet_toolbar = QToolBar("Sheet")
+        sheet_toolbar.setMovable(False)
+        sheet_toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.addToolBar(sheet_toolbar)
+        sheet_toolbar.addAction(self.action_add_sheet)
 
     def _build_central_ui(self) -> None:
         root = QWidget(self)
@@ -161,9 +178,16 @@ class MainWindow(QMainWindow):
         self.name_box.setReadOnly(True)
         self.name_box.setFixedWidth(80)
         self.name_box.setPlaceholderText("A1")
+        self.name_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
         formula_row.addWidget(self.name_box)
 
+        self.fx_label = QLabel("fx")
+        self.fx_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.fx_label.setFixedWidth(24)
+        formula_row.addWidget(self.fx_label)
+
         self.formula_bar = QLineEdit()
+        self.formula_bar.setClearButtonEnabled(True)
         self.formula_bar.setPlaceholderText("Enter a value or formula (e.g., =SUM(1,2,3))")
         self.formula_bar.returnPressed.connect(self._apply_formula_to_current_cell)
         formula_row.addWidget(self.formula_bar)
@@ -173,19 +197,36 @@ class MainWindow(QMainWindow):
         self.sheet_tabs = QTabWidget()
         self.sheet_tabs.setTabsClosable(False)
         self.sheet_tabs.setMovable(True)
+        self.sheet_tabs.setDocumentMode(True)
         self.sheet_tabs.currentChanged.connect(self._on_sheet_changed)
+        self.sheet_tabs.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.sheet_tabs.tabBar().customContextMenuRequested.connect(self._show_sheet_context_menu)
+
+        add_sheet_button = QPushButton("+")
+        add_sheet_button.setToolTip("Add sheet")
+        add_sheet_button.setFixedWidth(24)
+        add_sheet_button.clicked.connect(self._add_sheet)
+        self.sheet_tabs.setCornerWidget(add_sheet_button, Qt.Corner.TopRightCorner)
 
         self._rebuild_sheet_tabs()
 
         layout.addWidget(self.sheet_tabs)
+        root.setStyleSheet(
+            "QHeaderView::section { font-weight: 600; }"
+            "QLineEdit { padding: 4px; }"
+        )
         self.setCentralWidget(root)
 
     def _build_status_bar(self) -> None:
         bar = QStatusBar()
         self.status_position = QLabel("Cell: -")
+        self.status_selection = QLabel("Selection: 0")
         self.status_mode = QLabel("Mode: Ready")
+        self.status_file = QLabel("File: Unsaved")
         bar.addPermanentWidget(self.status_position)
+        bar.addPermanentWidget(self.status_selection)
         bar.addPermanentWidget(self.status_mode)
+        bar.addPermanentWidget(self.status_file)
         bar.showMessage("Ready")
         self.setStatusBar(bar)
 
@@ -200,6 +241,7 @@ class MainWindow(QMainWindow):
         active_index = min(self.workbook.active_sheet_index, self.sheet_tabs.count() - 1)
         self.sheet_tabs.setCurrentIndex(max(0, active_index))
         self.sheet_tabs.blockSignals(False)
+        self._refresh_action_states()
 
     def _build_grid_for_sheet(self, sheet_name: str) -> QTableWidget:
         table = QTableWidget(self.ROW_COUNT, self.COL_COUNT)
@@ -210,9 +252,14 @@ class MainWindow(QMainWindow):
         table.setSelectionMode(QTableWidget.SelectionMode.ContiguousSelection)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
         table.horizontalHeader().setDefaultSectionSize(110)
+        table.horizontalHeader().setStretchLastSection(True)
         table.verticalHeader().setDefaultSectionSize(24)
+        table.verticalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        table.setTabKeyNavigation(True)
         table.itemChanged.connect(self._on_cell_changed)
         table.currentCellChanged.connect(self._on_current_cell_changed)
+        table.itemSelectionChanged.connect(self._on_selection_changed)
         return table
 
     def _load_sheet_into_grid(self, sheet_name: str, table: QTableWidget) -> None:
@@ -243,6 +290,7 @@ class MainWindow(QMainWindow):
                 grid.currentRow(),
                 grid.currentColumn(),
             )
+        self._refresh_action_states()
 
     def _on_current_cell_changed(self, current_row: int, current_col: int, _prev_row: int, _prev_col: int) -> None:
         if current_row < 0 or current_col < 0:
@@ -258,6 +306,13 @@ class MainWindow(QMainWindow):
         self.name_box.setText(address)
         self.formula_bar.setText(cell.formula if cell.formula else "" if cell.value is None else str(cell.value))
         self.status_position.setText(f"Cell: {address}")
+
+    def _on_selection_changed(self) -> None:
+        grid = self._current_grid()
+        if grid is None:
+            self.status_selection.setText("Selection: 0")
+            return
+        self.status_selection.setText(f"Selection: {len(grid.selectedIndexes())}")
 
     def _on_cell_changed(self, item: QTableWidgetItem) -> None:
         if self._suppress_cell_events:
@@ -356,6 +411,19 @@ class MainWindow(QMainWindow):
         self._set_cell_from_user_input(row, col, self.formula_bar.text(), record_undo=True)
         grid.setCurrentCell(row, col)
 
+    def _edit_current_cell(self) -> None:
+        grid = self._current_grid()
+        if grid is None:
+            return
+        row = max(0, grid.currentRow())
+        col = max(0, grid.currentColumn())
+        item = grid.item(row, col)
+        if item is None:
+            item = QTableWidgetItem("")
+            grid.setItem(row, col, item)
+        grid.editItem(item)
+        self.formula_bar.setFocus(Qt.FocusReason.ShortcutFocusReason)
+
     def _copy_selection(self) -> None:
         grid = self._current_grid()
         if grid is None:
@@ -365,13 +433,19 @@ class MainWindow(QMainWindow):
         if not selected:
             return
 
+        sheet = self.workbook.get_active_sheet()
         selection = selected[0]
         lines: list[str] = []
         for row in range(selection.topRow(), selection.bottomRow() + 1):
             cells: list[str] = []
             for col in range(selection.leftColumn(), selection.rightColumn() + 1):
-                item = grid.item(row, col)
-                cells.append(item.text() if item else "")
+                address = self._index_to_address(row, col)
+                source = sheet.get_cell(address)
+                if source.formula:
+                    cells.append(source.formula)
+                else:
+                    item = grid.item(row, col)
+                    cells.append(item.text() if item else "")
             lines.append("\t".join(cells))
 
         QApplication.clipboard().setText("\n".join(lines))
@@ -411,6 +485,7 @@ class MainWindow(QMainWindow):
     def _push_undo(self, edits: list[dict[str, Any]]) -> None:
         self._undo_stack.append({"edits": edits})
         self._redo_stack.clear()
+        self._refresh_action_states()
 
     def _undo(self) -> None:
         if not self._undo_stack:
@@ -423,6 +498,7 @@ class MainWindow(QMainWindow):
         self._redo_stack.append(command)
         self.status_mode.setText("Mode: Undo")
         self.statusBar().showMessage("Undo", 1200)
+        self._refresh_action_states()
 
     def _redo(self) -> None:
         if not self._redo_stack:
@@ -435,6 +511,7 @@ class MainWindow(QMainWindow):
         self._undo_stack.append(command)
         self.status_mode.setText("Mode: Redo")
         self.statusBar().showMessage("Redo", 1200)
+        self._refresh_action_states()
 
     def _apply_cell_state(self, row: int, col: int, state: dict[str, Any]) -> None:
         sheet = self.workbook.get_active_sheet()
@@ -463,6 +540,7 @@ class MainWindow(QMainWindow):
         self._rebuild_sheet_tabs()
         self._refresh_window_title()
         self.statusBar().showMessage("Created new workbook", 2000)
+        self._refresh_action_states()
 
     def _open_workbook(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open Workbook", "", "JSON Workbook (*.json)")
@@ -481,6 +559,7 @@ class MainWindow(QMainWindow):
         self._rebuild_sheet_tabs()
         self._refresh_window_title()
         self.statusBar().showMessage(f"Opened {path}", 2000)
+        self._refresh_action_states()
 
     def _save_workbook(self) -> None:
         if self.current_file_path is None:
@@ -508,7 +587,7 @@ class MainWindow(QMainWindow):
         if not accepted:
             return
 
-        sheet_name = name.strip() or base_name
+        sheet_name = self._unique_sheet_name(name.strip() or base_name)
         self.workbook.add_sheet(sheet_name)
         table = self._build_grid_for_sheet(sheet_name)
         self.sheet_tabs.addTab(table, sheet_name)
@@ -530,6 +609,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Rename Sheet", "Sheet name cannot be empty.")
             return
 
+        if any(i != index and s.name == normalized for i, s in enumerate(self.workbook.sheets)):
+            QMessageBox.information(self, "Rename Sheet", "A sheet with that name already exists.")
+            return
+
         sheet.name = normalized
         self.sheet_tabs.setTabText(index, normalized)
         self.statusBar().showMessage(f"Renamed sheet to {normalized}", 2000)
@@ -540,7 +623,7 @@ class MainWindow(QMainWindow):
             return
 
         source = self.workbook.sheets[index]
-        duplicate = self.workbook.add_sheet(f"{source.name} Copy")
+        duplicate = self.workbook.add_sheet(self._unique_sheet_name(f"{source.name} Copy"))
         for address, cell in source.cells.items():
             new_cell = duplicate.get_cell(address)
             new_cell.value = cell.value
@@ -569,13 +652,44 @@ class MainWindow(QMainWindow):
         self.sheet_tabs.setCurrentIndex(self.workbook.active_sheet_index)
         self.statusBar().showMessage(f"Deleted sheet {sheet_name}", 2000)
 
+    def _show_sheet_context_menu(self, pos) -> None:
+        tab_bar = self.sheet_tabs.tabBar()
+        tab_index = tab_bar.tabAt(pos)
+        if tab_index < 0:
+            return
+
+        self.sheet_tabs.setCurrentIndex(tab_index)
+        menu = QMenu(self)
+        menu.addAction(self.action_add_sheet)
+        menu.addSeparator()
+        menu.addAction(self.action_rename_sheet)
+        menu.addAction(self.action_duplicate_sheet)
+        menu.addAction(self.action_delete_sheet)
+        menu.exec(tab_bar.mapToGlobal(pos))
+
     def _refresh_window_title(self) -> None:
         title_suffix = self.current_file_path if self.current_file_path else self.workbook.name
         self.setWindowTitle(f"AI Spreadsheet - {title_suffix}")
+        self.status_file.setText(f"File: {title_suffix}")
 
     def _current_grid(self) -> Optional[QTableWidget]:
         widget = self.sheet_tabs.currentWidget()
         return widget if isinstance(widget, QTableWidget) else None
+
+    def _refresh_action_states(self) -> None:
+        self.action_undo.setEnabled(bool(self._undo_stack))
+        self.action_redo.setEnabled(bool(self._redo_stack))
+        self.action_delete_sheet.setEnabled(len(self.workbook.sheets) > 1)
+
+    def _unique_sheet_name(self, base_name: str) -> str:
+        existing = {sheet.name for sheet in self.workbook.sheets}
+        if base_name not in existing:
+            return base_name
+
+        suffix = 2
+        while f"{base_name} ({suffix})" in existing:
+            suffix += 1
+        return f"{base_name} ({suffix})"
 
     @staticmethod
     def _column_label(col: int) -> str:
