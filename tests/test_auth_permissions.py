@@ -48,8 +48,16 @@ def test_permission_workflow_owner_editor_viewer_and_revoke():
     permissions = PermissionService()
     workbook = permissions.create_workbook_with_owner("Roadmap", "owner@example.com")
 
-    workbook.permissions = permissions.invite_user(workbook.permissions, "viewer@example.com")
-    workbook.permissions = permissions.grant_editor_access(workbook.permissions, "editor@example.com")
+    workbook.permissions = permissions.invite_user_as_owner(
+        workbook.permissions,
+        actor_email="owner@example.com",
+        user_email="viewer@example.com",
+    )
+    workbook.permissions = permissions.grant_editor_access_as_owner(
+        workbook.permissions,
+        actor_email="owner@example.com",
+        user_email="editor@example.com",
+    )
 
     assert permissions.resolve_role("owner@example.com", workbook) == "owner"
     assert permissions.resolve_role("editor@example.com", workbook) == "editor"
@@ -60,8 +68,24 @@ def test_permission_workflow_owner_editor_viewer_and_revoke():
     assert not permissions.can_edit("viewer@example.com", workbook)
     assert permissions.can_view("viewer@example.com", workbook)
 
-    workbook.permissions = permissions.revoke_access(workbook.permissions, "viewer@example.com")
+    workbook.permissions = permissions.revoke_access_as_owner(
+        workbook.permissions,
+        actor_email="owner@example.com",
+        user_email="viewer@example.com",
+    )
     assert permissions.resolve_role("viewer@example.com", workbook) is None
+
+
+def test_permission_service_rejects_non_owner_sharing_changes():
+    service = PermissionService()
+    workbook = Workbook(name="Ops", permissions={"owner": "owner@example.com", "shared_with": []})
+
+    with pytest.raises(PermissionError):
+        service.grant_viewer_access_as_owner(
+            permissions=workbook.permissions,
+            actor_email="editor@example.com",
+            user_email="viewer@example.com",
+        )
 
 
 def test_permission_service_rejects_revoking_owner():

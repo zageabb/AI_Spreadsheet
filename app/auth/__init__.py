@@ -2,8 +2,11 @@
 
 from app.auth.service import (
     AuthService,
+    IdentityProvider,
     InMemoryUserRepository,
+    LocalIdentityProvider,
     PasswordHasher,
+    PostgresUserRepository,
     SessionPrincipal,
     SessionTokenManager,
     UserRecord,
@@ -11,8 +14,11 @@ from app.auth.service import (
 
 __all__ = [
     "AuthService",
+    "IdentityProvider",
     "InMemoryUserRepository",
+    "LocalIdentityProvider",
     "PasswordHasher",
+    "PostgresUserRepository",
     "SessionPrincipal",
     "SessionTokenManager",
     "UserRecord",

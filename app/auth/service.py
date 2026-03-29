@@ -12,6 +12,9 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.storage.postgres_config import PostgresConfig
+from app.storage.postgres_db import PostgresDatabase
+
 
 @dataclass(slots=True)
 class UserRecord:
@@ -59,6 +62,54 @@ class InMemoryUserRepository:
 
     def get_user_by_email(self, email: str) -> UserRecord | None:
         return self._users_by_email.get(_normalize_email(email))
+
+
+class PostgresUserRepository:
+    """PostgreSQL-backed user repository for registration/login flows."""
+
+    def __init__(self, config: PostgresConfig | None = None) -> None:
+        self.db = PostgresDatabase(config=config)
+
+    def create_user(self, email: str, password_hash: str) -> UserRecord:
+        normalized_email = _normalize_email(email)
+        with self.db.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (email, password_hash)
+                    VALUES (%s, %s)
+                    ON CONFLICT (email) DO NOTHING
+                    RETURNING id, email, password_hash
+                    """,
+                    (normalized_email, password_hash),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise ValueError("User already exists for this email address.")
+            conn.commit()
+
+        return UserRecord(
+            user_id=str(row["id"]),
+            email=str(row["email"]),
+            password_hash=str(row["password_hash"] or ""),
+        )
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        normalized_email = _normalize_email(email)
+        with self.db.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, email, password_hash FROM users WHERE email = %s LIMIT 1",
+                    (normalized_email,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                return UserRecord(
+                    user_id=str(row["id"]),
+                    email=str(row["email"]),
+                    password_hash=str(row["password_hash"] or ""),
+                )
 
 
 class PasswordHasher:
@@ -149,6 +200,40 @@ class SessionTokenManager:
         return base64.urlsafe_b64encode(digest).decode("ascii")
 
 
+class IdentityProvider(Protocol):
+    """Abstraction seam for future external identity providers."""
+
+    def register(self, email: str, password: str) -> UserRecord:
+        """Register user credentials with the identity provider."""
+
+    def authenticate(self, email: str, password: str) -> UserRecord:
+        """Return user record when credentials are valid."""
+
+
+class LocalIdentityProvider:
+    """Email/password provider backed by a UserRepository and PasswordHasher."""
+
+    def __init__(self, repository: UserRepository, password_hasher: PasswordHasher) -> None:
+        self.repository = repository
+        self.password_hasher = password_hasher
+
+    def register(self, email: str, password: str) -> UserRecord:
+        normalized_email = _normalize_email(email)
+        _validate_password(password)
+        password_hash = self.password_hasher.hash_password(password)
+        return self.repository.create_user(email=normalized_email, password_hash=password_hash)
+
+    def authenticate(self, email: str, password: str) -> UserRecord:
+        user = self.repository.get_user_by_email(email)
+        if user is None:
+            raise ValueError("Invalid email or password.")
+
+        if not user.password_hash or not self.password_hasher.verify_password(password, user.password_hash):
+            raise ValueError("Invalid email or password.")
+
+        return user
+
+
 class AuthService:
     """Registration/login/session auth service using email identity."""
 
@@ -157,28 +242,20 @@ class AuthService:
         repository: UserRepository | None = None,
         password_hasher: PasswordHasher | None = None,
         session_manager: SessionTokenManager | None = None,
+        identity_provider: IdentityProvider | None = None,
     ) -> None:
         self.repository = repository or InMemoryUserRepository()
         self.password_hasher = password_hasher or PasswordHasher()
+        self.identity_provider = identity_provider or LocalIdentityProvider(self.repository, self.password_hasher)
         self.session_manager = session_manager or SessionTokenManager()
 
     def register_user(self, email: str, password: str) -> UserRecord:
         """Create a user identity from email/password credentials."""
-        normalized_email = _normalize_email(email)
-        _validate_password(password)
-
-        password_hash = self.password_hasher.hash_password(password)
-        return self.repository.create_user(email=normalized_email, password_hash=password_hash)
+        return self.identity_provider.register(email=email, password=password)
 
     def login(self, email: str, password: str) -> str:
         """Authenticate by email+password and return a signed session token."""
-        user = self.repository.get_user_by_email(email)
-        if user is None:
-            raise ValueError("Invalid email or password.")
-
-        if not self.password_hasher.verify_password(password, user.password_hash):
-            raise ValueError("Invalid email or password.")
-
+        user = self.identity_provider.authenticate(email=email, password=password)
         return self.session_manager.issue_token(user)
 
     def validate_session(self, token: str) -> SessionPrincipal | None:
