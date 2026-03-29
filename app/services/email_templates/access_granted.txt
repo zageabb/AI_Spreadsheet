@@ -1,0 +1,5 @@
+Hello ${recipient_email},
+
+${granted_by_email} granted you ${role} access to workbook "${workbook_name}".
+
+Open workbook: ${workbook_link}

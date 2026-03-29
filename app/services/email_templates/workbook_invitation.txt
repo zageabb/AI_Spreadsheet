@@ -1,0 +1,7 @@
+Hello ${recipient_email},
+
+${inviter_email} invited you to the workbook "${workbook_name}" with ${role} access.
+
+Open workbook: ${workbook_link}
+
+If this invitation looks unexpected, contact your workbook administrator.

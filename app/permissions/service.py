@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.models.workbook import Workbook
+from app.services.email_service import EmailNotificationService
 from app.storage.postgres_config import PostgresConfig
 from app.storage.postgres_db import PostgresDatabase
 
@@ -198,6 +199,76 @@ class PermissionService:
                 for user, role in sorted(dedup.items(), key=lambda item: item[0])
             ],
         }
+
+
+class SharingWorkflowService:
+    """Workflow orchestration for permission updates + email notifications."""
+
+    def __init__(
+        self,
+        permission_service: PermissionService | None = None,
+        email_service: EmailNotificationService | None = None,
+    ) -> None:
+        self.permission_service = permission_service or PermissionService()
+        self.email_service = email_service or EmailNotificationService()
+
+    def invite_user(
+        self,
+        workbook: Workbook,
+        actor_email: str,
+        target_email: str,
+        role: Role = "viewer",
+        workbook_link: str = "",
+    ) -> Workbook:
+        workbook.permissions = self.permission_service.invite_user_as_owner(
+            permissions=workbook.permissions,
+            actor_email=actor_email,
+            user_email=target_email,
+            role=role,
+        )
+        self.email_service.send_workbook_invitation(
+            recipient_email=target_email,
+            workbook_name=workbook.name,
+            inviter_email=actor_email,
+            role=role,
+            workbook_link=workbook_link,
+        )
+        return workbook
+
+    def grant_access(
+        self,
+        workbook: Workbook,
+        actor_email: str,
+        target_email: str,
+        role: Role,
+        workbook_link: str = "",
+    ) -> Workbook:
+        workbook.permissions = self.permission_service.grant_access(
+            permissions=workbook.permissions,
+            user_email=target_email,
+            role=role,
+        )
+        self.email_service.send_access_granted(
+            recipient_email=target_email,
+            workbook_name=workbook.name,
+            granted_by_email=actor_email,
+            role=role,
+            workbook_link=workbook_link,
+        )
+        return workbook
+
+    def revoke_access(self, workbook: Workbook, actor_email: str, target_email: str) -> Workbook:
+        workbook.permissions = self.permission_service.revoke_access_as_owner(
+            permissions=workbook.permissions,
+            actor_email=actor_email,
+            user_email=target_email,
+        )
+        self.email_service.send_access_removed(
+            recipient_email=target_email,
+            workbook_name=workbook.name,
+            removed_by_email=actor_email,
+        )
+        return workbook
 
 
 class PostgresPermissionService:
