@@ -138,10 +138,12 @@ Authentication is now scaffolded as reusable services in `app/auth/service.py` w
 - email-based registration and login
 - PBKDF2-SHA256 password hashing (`PasswordHasher`)
 - signed session tokens (`SessionTokenManager`)
-- repository abstraction (`UserRepository`) so external identity providers or database-backed auth can be integrated later without changing UI code
+- identity-provider abstraction (`IdentityProvider`) and repository abstraction (`UserRepository`) so external identity providers or database-backed auth can be integrated later without changing UI code
+- optional PostgreSQL-backed user repository (`PostgresUserRepository`) for persistent email/password accounts
 
 Environment variables for auth are configured via `.env`:
 
+- `AUTH_IDENTITY_PROVIDER` (`local` scaffold default)
 - `AUTH_SESSION_SECRET` (required for token signing)
 - `AUTH_SESSION_TTL_SECONDS`
 - `AUTH_PASSWORD_ITERATIONS`
@@ -149,11 +151,9 @@ Environment variables for auth are configured via `.env`:
 
 Workbook sharing and role checks are handled separately in `app/permissions/service.py` via `PermissionService`:
 
-- `create_workbook_with_owner(...)` to create a workbook and assign owner
-- `invite_user(...)` to invite and default to viewer (or provide role)
-- `grant_editor_access(...)` / `grant_viewer_access(...)`
-- `revoke_access(...)`
-- `can_view(...)` / `can_edit(...)` authorization checks
+- `create_workbook_with_owner(...)` to create workbook + owner assignment
+- owner-controlled sharing workflows: `invite_user_as_owner(...)`, `grant_editor_access_as_owner(...)`, `grant_viewer_access_as_owner(...)`, `revoke_access_as_owner(...)`
+- role checks via `can_view(...)` / `can_edit(...)` and lookup via `resolve_role(...)`
 
 Roles are limited to `owner`, `editor`, and `viewer`, and are intended to be reusable across both JSON-local and PostgreSQL-backed modes.
 

@@ -40,9 +40,60 @@ class PermissionService:
         updated["shared_with"] = [entry for entry in updated["shared_with"] if entry["user"] != owner]
         return updated
 
+    def transfer_ownership(
+        self,
+        permissions: dict[str, Any],
+        actor_email: str,
+        new_owner_email: str,
+    ) -> dict[str, Any]:
+        """Transfer workbook ownership from current owner to a new owner."""
+        self._require_owner(actor_email=actor_email, permissions=permissions)
+        return self.assign_owner(permissions=permissions, owner_email=new_owner_email)
+
+    def invite_user_as_owner(
+        self,
+        permissions: dict[str, Any],
+        actor_email: str,
+        user_email: str,
+        role: Role = "viewer",
+    ) -> dict[str, Any]:
+        """Invite user with role, requiring owner privileges for actor."""
+        self._require_owner(actor_email=actor_email, permissions=permissions)
+        return self.invite_user(permissions=permissions, user_email=user_email, role=role)
+
     def invite_user(self, permissions: dict[str, Any], user_email: str, role: Role = "viewer") -> dict[str, Any]:
         """Invite user to workbook with default viewer role."""
         return self.grant_access(permissions=permissions, user_email=user_email, role=role)
+
+    def grant_editor_access_as_owner(
+        self,
+        permissions: dict[str, Any],
+        actor_email: str,
+        user_email: str,
+    ) -> dict[str, Any]:
+        """Grant editor role when actor is workbook owner."""
+        self._require_owner(actor_email=actor_email, permissions=permissions)
+        return self.grant_editor_access(permissions=permissions, user_email=user_email)
+
+    def grant_viewer_access_as_owner(
+        self,
+        permissions: dict[str, Any],
+        actor_email: str,
+        user_email: str,
+    ) -> dict[str, Any]:
+        """Grant viewer role when actor is workbook owner."""
+        self._require_owner(actor_email=actor_email, permissions=permissions)
+        return self.grant_viewer_access(permissions=permissions, user_email=user_email)
+
+    def revoke_access_as_owner(
+        self,
+        permissions: dict[str, Any],
+        actor_email: str,
+        user_email: str,
+    ) -> dict[str, Any]:
+        """Revoke user role when actor is workbook owner."""
+        self._require_owner(actor_email=actor_email, permissions=permissions)
+        return self.revoke_access(permissions=permissions, user_email=user_email)
 
     def grant_editor_access(self, permissions: dict[str, Any], user_email: str) -> dict[str, Any]:
         """Grant editor role to user."""
@@ -105,6 +156,12 @@ class PermissionService:
                 return entry["role"]
 
         return None
+
+    def _require_owner(self, actor_email: str, permissions: dict[str, Any]) -> None:
+        actor = _normalize_email(actor_email)
+        normalized_permissions = self._normalized_permissions(permissions)
+        if normalized_permissions.get("owner") != actor:
+            raise PermissionError("Only workbook owners can modify sharing permissions.")
 
     def _normalized_permissions(self, permissions: dict[str, Any]) -> dict[str, Any]:
         cloned = deepcopy(permissions) if isinstance(permissions, dict) else {}
