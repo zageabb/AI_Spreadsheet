@@ -130,6 +130,33 @@ python -m db.json_to_postgres
 
 By default this migrates `data/*.json` and stores each workbook in PostgreSQL using the JSON filename stem as the workbook `external_key`.
 
+
+## Authentication and sharing model
+
+Authentication is now scaffolded as reusable services in `app/auth/service.py` with:
+
+- email-based registration and login
+- PBKDF2-SHA256 password hashing (`PasswordHasher`)
+- signed session tokens (`SessionTokenManager`)
+- repository abstraction (`UserRepository`) so external identity providers or database-backed auth can be integrated later without changing UI code
+
+Environment variables for auth are configured via `.env`:
+
+- `AUTH_SESSION_SECRET` (required for token signing)
+- `AUTH_SESSION_TTL_SECONDS`
+- `AUTH_PASSWORD_ITERATIONS`
+- `AUTH_PASSWORD_PEPPER` (optional)
+
+Workbook sharing and role checks are handled separately in `app/permissions/service.py` via `PermissionService`:
+
+- `create_workbook_with_owner(...)` to create a workbook and assign owner
+- `invite_user(...)` to invite and default to viewer (or provide role)
+- `grant_editor_access(...)` / `grant_viewer_access(...)`
+- `revoke_access(...)`
+- `can_view(...)` / `can_edit(...)` authorization checks
+
+Roles are limited to `owner`, `editor`, and `viewer`, and are intended to be reusable across both JSON-local and PostgreSQL-backed modes.
+
 ## PostgreSQL authorization support
 
 `app/permissions/service.py` now includes `PostgresPermissionService` for role checks against PostgreSQL-backed workbooks (`owner` / `editor` / `viewer`).
