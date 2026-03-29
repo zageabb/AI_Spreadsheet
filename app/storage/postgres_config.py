@@ -5,6 +5,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+_ALLOWED_SSLMODES = {
+    "disable",
+    "allow",
+    "prefer",
+    "require",
+    "verify-ca",
+    "verify-full",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class PostgresConfig:
@@ -33,13 +42,29 @@ class PostgresConfig:
         - POSTGRES_SSLMODE
         """
 
+        host = os.getenv("POSTGRES_HOST", "localhost").strip() or "localhost"
+        database = os.getenv("POSTGRES_DB", "ai_spreadsheet").strip() or "ai_spreadsheet"
+        user = os.getenv("POSTGRES_USER", "spreadsheet_user").strip() or "spreadsheet_user"
+        password = os.getenv("POSTGRES_PASSWORD", "")
+
+        try:
+            port = int(os.getenv("POSTGRES_PORT", "5432"))
+        except ValueError as exc:
+            raise ValueError("POSTGRES_PORT must be an integer.") from exc
+        if port <= 0:
+            raise ValueError("POSTGRES_PORT must be a positive integer.")
+
+        sslmode = os.getenv("POSTGRES_SSLMODE", "prefer").strip().lower() or "prefer"
+        if sslmode not in _ALLOWED_SSLMODES:
+            raise ValueError("POSTGRES_SSLMODE must be one of disable, allow, prefer, require, verify-ca, verify-full.")
+
         return cls(
-            host=os.getenv("POSTGRES_HOST", "localhost"),
-            port=int(os.getenv("POSTGRES_PORT", "5432")),
-            database=os.getenv("POSTGRES_DB", "ai_spreadsheet"),
-            user=os.getenv("POSTGRES_USER", "spreadsheet_user"),
-            password=os.getenv("POSTGRES_PASSWORD", ""),
-            sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
+            host=host,
+            port=port,
+            database=database,
+            user=user,
+            password=password,
+            sslmode=sslmode,
         )
 
     def connection_kwargs(self) -> dict[str, str | int]:

@@ -391,6 +391,9 @@ def _extract_permissions(workbook: Workbook | dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_email(email: str) -> str:
+    if not isinstance(email, str):
+        raise ValueError("A valid email address is required.")
+
     normalized = email.lower().strip()
     if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
         raise ValueError("A valid email address is required.")

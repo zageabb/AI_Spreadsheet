@@ -39,6 +39,17 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.sheets[0].cells["B1"].formula == "=A1*0.1"
 
 
+def test_save_creates_parent_directories(tmp_path) -> None:
+    storage = JsonWorkbookStorage()
+    workbook = Workbook(name="Nested")
+    workbook.add_sheet("Sheet1")
+
+    target = tmp_path / "nested" / "path" / "workbook.json"
+    storage.save_workbook(str(target), workbook)
+
+    assert target.exists()
+
+
 def test_invalid_active_sheet_index_raises(tmp_path):
     target = tmp_path / "bad_workbook.json"
     target.write_text(
@@ -94,6 +105,24 @@ def test_invalid_formula_without_equals_raises(tmp_path):
                         },
                     }
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    storage = JsonWorkbookStorage()
+    with pytest.raises(StorageValidationError):
+        storage.load_workbook(str(target))
+
+
+def test_invalid_cell_address_raises(tmp_path):
+    target = tmp_path / "bad_address.json"
+    target.write_text(
+        json.dumps(
+            {
+                "name": "BadAddress",
+                "active_sheet_index": 0,
+                "sheets": [{"name": "Sheet1", "cells": {"1A": {"value": 10}}}],
             }
         ),
         encoding="utf-8",

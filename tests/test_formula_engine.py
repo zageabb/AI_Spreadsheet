@@ -50,14 +50,29 @@ def test_formula_supports_nested_function_calls_and_comparison() -> None:
     assert result == "ok!"
 
 
+def test_formula_supports_unary_minus_and_parentheses() -> None:
+    engine = _build_engine()
+    assert engine.evaluate("=-(2+3)") == -5.0
+
+
 def test_formula_returns_error_for_invalid_syntax() -> None:
     engine = _build_engine()
     assert engine.evaluate("=SUM(1,2") == "#PARSE!"
 
 
+def test_formula_returns_parse_error_for_invalid_token() -> None:
+    engine = _build_engine()
+    assert engine.evaluate("=1+@")=="#PARSE!"
+
+
 def test_formula_returns_name_error_for_missing_function() -> None:
     engine = _build_engine()
     assert engine.evaluate("=MISSING_FN(1)") == "#NAME?"
+
+
+def test_formula_propagates_resolved_cell_errors() -> None:
+    engine = _build_engine()
+    assert engine.evaluate("=A1", context={"get_cell_value": lambda _ref: "#DIV/0!"}) == "#DIV/0!"
 
 
 def test_divide_by_zero_error() -> None:
