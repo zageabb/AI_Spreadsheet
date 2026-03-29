@@ -157,6 +157,69 @@ Workbook sharing and role checks are handled separately in `app/permissions/serv
 
 Roles are limited to `owner`, `editor`, and `viewer`, and are intended to be reusable across both JSON-local and PostgreSQL-backed modes.
 
+## Email notifications (sharing + auth scaffold)
+
+The email notification module is implemented in `app/services/email_service.py` and designed to stay swappable across providers.
+
+Capabilities in this stage:
+
+- workbook invitation email
+- access granted email
+- access removed email
+- optional password reset email scaffold
+
+Text templates are in `app/services/email_templates/`:
+
+- `workbook_invitation.txt`
+- `access_granted.txt`
+- `access_removed.txt`
+- `password_reset.txt`
+
+### Provider configuration
+
+Configure in `.env` (no hardcoded secrets):
+
+- `EMAIL_ENABLED` — global on/off switch
+- `EMAIL_DEV_MODE` — safe local mode that captures/logs outgoing emails without external delivery
+- `EMAIL_PROVIDER` — `smtp` or `api`
+- `EMAIL_FROM`
+
+SMTP mode:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_USE_TLS`
+
+API mode:
+
+- `EMAIL_API_ENDPOINT`
+- `EMAIL_API_TOKEN`
+- `EMAIL_API_TIMEOUT_SECONDS`
+
+Optional link base:
+
+- `APP_BASE_URL`
+
+### Usage from sharing workflows
+
+Use `SharingWorkflowService` (`app/permissions/service.py`) to keep authorization rules and notifications together:
+
+- `invite_user(...)` updates permissions and sends invitation email
+- `grant_access(...)` updates role and sends access-granted email
+- `revoke_access(...)` removes role and sends access-removed email
+
+### Usage from auth workflows
+
+`AuthService.send_password_reset_email(...)` is a scaffold helper that:
+
+1. validates that the account exists
+2. creates an opaque reset token
+3. sends password reset instructions through `EmailNotificationService`
+
+Persisting and validating reset tokens is intentionally left for a later stage.
+
 ## PostgreSQL authorization support
 
 `app/permissions/service.py` now includes `PostgresPermissionService` for role checks against PostgreSQL-backed workbooks (`owner` / `editor` / `viewer`).

@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.services.email_service import EmailNotificationService
 from app.storage.postgres_config import PostgresConfig
 from app.storage.postgres_db import PostgresDatabase
 
@@ -257,6 +258,30 @@ class AuthService:
         """Authenticate by email+password and return a signed session token."""
         user = self.identity_provider.authenticate(email=email, password=password)
         return self.session_manager.issue_token(user)
+
+    def send_password_reset_email(
+        self,
+        email: str,
+        email_service: EmailNotificationService | None = None,
+        reset_link_base: str = "",
+    ) -> str:
+        """
+        Optional password reset scaffold for future server/UI integration.
+
+        Returns an opaque token so a future reset-token repository can persist it.
+        """
+        user = self.repository.get_user_by_email(email)
+        if user is None:
+            raise ValueError("No user exists for this email address.")
+
+        token = secrets.token_urlsafe(24)
+        notifier = email_service or EmailNotificationService()
+        notifier.send_password_reset_scaffold(
+            recipient_email=user.email,
+            reset_token=token,
+            reset_link_base=reset_link_base,
+        )
+        return token
 
     def validate_session(self, token: str) -> SessionPrincipal | None:
         """Validate token and return principal when token is valid."""

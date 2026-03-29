@@ -1,0 +1,5 @@
+Hello ${recipient_email},
+
+Your access to workbook "${workbook_name}" was removed by ${removed_by_email}.
+
+If you still need access, contact the workbook owner.
