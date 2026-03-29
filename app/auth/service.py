@@ -117,7 +117,11 @@ class PasswordHasher:
     """PBKDF2 password hashing utility with env-configurable strength."""
 
     def __init__(self, iterations: int | None = None, pepper: str | None = None) -> None:
-        self.iterations = iterations or int(os.getenv("AUTH_PASSWORD_ITERATIONS", "260000"))
+        configured_iterations = iterations if iterations is not None else int(os.getenv("AUTH_PASSWORD_ITERATIONS", "260000"))
+        if configured_iterations <= 0:
+            raise ValueError("AUTH_PASSWORD_ITERATIONS must be a positive integer.")
+
+        self.iterations = configured_iterations
         self.pepper = pepper if pepper is not None else os.getenv("AUTH_PASSWORD_PEPPER", "")
 
     def hash_password(self, password: str) -> str:
@@ -131,13 +135,18 @@ class PasswordHasher:
         return f"pbkdf2_sha256${self.iterations}${base64.urlsafe_b64encode(salt).decode()}${base64.urlsafe_b64encode(digest).decode()}"
 
     def verify_password(self, password: str, password_hash: str) -> bool:
-        algorithm, iteration_text, salt_text, digest_text = password_hash.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
+        try:
+            algorithm, iteration_text, salt_text, digest_text = password_hash.split("$", 3)
+            if algorithm != "pbkdf2_sha256":
+                return False
 
-        iterations = int(iteration_text)
-        salt = base64.urlsafe_b64decode(salt_text.encode())
-        expected_digest = base64.urlsafe_b64decode(digest_text.encode())
+            iterations = int(iteration_text)
+            if iterations <= 0:
+                return False
+            salt = base64.urlsafe_b64decode(salt_text.encode())
+            expected_digest = base64.urlsafe_b64decode(digest_text.encode())
+        except (TypeError, ValueError):
+            return False
         current_digest = hashlib.pbkdf2_hmac(
             "sha256",
             f"{password}{self.pepper}".encode("utf-8"),
@@ -154,7 +163,10 @@ class SessionTokenManager:
         self.secret = (secret if secret is not None else os.getenv("AUTH_SESSION_SECRET", "")).encode("utf-8")
         if not self.secret:
             raise ValueError("AUTH_SESSION_SECRET must be configured for session token handling.")
-        self.ttl_seconds = ttl_seconds or int(os.getenv("AUTH_SESSION_TTL_SECONDS", "28800"))
+        configured_ttl = ttl_seconds if ttl_seconds is not None else int(os.getenv("AUTH_SESSION_TTL_SECONDS", "28800"))
+        if configured_ttl <= 0:
+            raise ValueError("AUTH_SESSION_TTL_SECONDS must be a positive integer.")
+        self.ttl_seconds = configured_ttl
 
     def issue_token(self, user: UserRecord) -> str:
         issued_at = int(time.time())
@@ -189,9 +201,14 @@ class SessionTokenManager:
         if expires_at <= now or issued_at <= 0:
             return None
 
+        user_id = str(payload.get("user_id") or "").strip()
+        email = str(payload.get("email") or "").lower().strip()
+        if not user_id or not email:
+            return None
+
         return SessionPrincipal(
-            user_id=str(payload.get("user_id") or ""),
-            email=str(payload.get("email") or "").lower().strip(),
+            user_id=user_id,
+            email=email,
             issued_at=issued_at,
             expires_at=expires_at,
         )
@@ -289,6 +306,9 @@ class AuthService:
 
 
 def _normalize_email(email: str) -> str:
+    if not isinstance(email, str):
+        raise ValueError("A valid email address is required.")
+
     normalized = email.lower().strip()
     if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
         raise ValueError("A valid email address is required.")

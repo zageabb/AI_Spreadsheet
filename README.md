@@ -56,6 +56,24 @@ AI_Spreadsheet/
   - Collaboration server
   - Email notifications
 
+
+## Reliability and hardening status
+
+The current scaffold includes lightweight but realistic automated coverage for core reliability paths:
+
+- formula engine parsing/evaluation and plugin loading (`tests/test_formula_engine.py`)
+- JSON workbook storage validation and round-trip persistence (`tests/test_json_storage.py`)
+- workbook model serialization defaults (`tests/test_workbook_model.py`)
+- auth/session and permission workflows (`tests/test_auth_permissions.py`)
+- PostgreSQL configuration parsing/validation (`tests/test_postgres_config.py`)
+
+Validation hardening included in this stage:
+
+- stricter auth config validation (`AUTH_PASSWORD_ITERATIONS`, `AUTH_SESSION_TTL_SECONDS`)
+- safer password hash verification for malformed hashes
+- stronger session token payload checks
+- stricter PostgreSQL env parsing and `POSTGRES_SSLMODE` validation
+
 ## Quick start
 
 ```bash

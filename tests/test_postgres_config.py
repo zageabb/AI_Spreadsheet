@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.storage import JsonWorkbookStorage, get_workbook_storage
 from app.storage.postgres_config import PostgresConfig
 
@@ -20,6 +22,18 @@ def test_postgres_config_from_env(monkeypatch):
     assert config.user == "sheet_user"
     assert config.password == "secret"
     assert config.sslmode == "require"
+
+
+def test_postgres_config_from_env_rejects_non_integer_port(monkeypatch):
+    monkeypatch.setenv("POSTGRES_PORT", "invalid")
+    with pytest.raises(ValueError):
+        PostgresConfig.from_env()
+
+
+def test_postgres_config_from_env_rejects_invalid_sslmode(monkeypatch):
+    monkeypatch.setenv("POSTGRES_SSLMODE", "sometimes")
+    with pytest.raises(ValueError):
+        PostgresConfig.from_env()
 
 
 def test_get_workbook_storage_defaults_to_json(monkeypatch):
