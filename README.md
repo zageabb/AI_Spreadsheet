@@ -163,6 +163,48 @@ Roles are limited to `owner`, `editor`, and `viewer`, and are intended to be reu
 
 This keeps authorization logic separate from UI and separate from workbook model/business logic.
 
+
+## Collaboration server (starter, not full co-editing)
+
+The collaboration backend now lives in `server/main.py` + `server/collaboration.py` and provides a realistic starter architecture separated from the desktop UI layer:
+
+- FastAPI REST endpoints for workbook join/leave, presence updates, lock acquire/release, and state snapshot retrieval.
+- WebSocket subscription channel at `/ws/collaboration/workbooks/{workbook_id}` for near real-time participant and advisory-lock events.
+- In-memory workbook session tracking keyed by workbook id.
+- User presence payloads tracking who has a workbook open, current sheet visibility, and active cell/range visibility.
+- Advisory lock scaffold (`sheet + range`) to reduce edit collisions before full merge/conflict resolution is implemented.
+
+Current REST endpoints:
+
+- `GET /health`
+- `GET /api/collaboration/workbooks/{workbook_id}`
+- `POST /api/collaboration/workbooks/{workbook_id}/join`
+- `POST /api/collaboration/workbooks/{workbook_id}/leave`
+- `POST /api/collaboration/workbooks/{workbook_id}/presence`
+- `POST /api/collaboration/workbooks/{workbook_id}/locks/acquire`
+- `POST /api/collaboration/workbooks/{workbook_id}/locks/release`
+
+Client/server separation:
+
+- Desktop-side collaboration contract scaffold is defined in `app/services/collaboration_client.py` as a protocol + payload dataclasses.
+- The PySide6 UI is not tightly coupled to FastAPI transport details.
+
+### Collaboration limitations (explicit)
+
+This stage intentionally does **not** claim full Google Sheets-style collaboration. Specifically:
+
+- No OT/CRDT algorithm yet; simultaneous cell edits are not merged automatically.
+- Locks are advisory starter controls, not hard transactional guarantees.
+- Server session state is currently in-memory (restart clears presence/locks).
+- No durable event log or replay stream yet.
+- No websocket auth handshake yet; integrate with auth/session tokens in a later stage.
+
+Run the collaboration server locally:
+
+```bash
+uvicorn server.main:app --reload --port 8000
+```
+
 ## Formula functions and plugins
 
 Built-in formula modules live in `app/formulas/` and are loaded dynamically when the app starts.  
