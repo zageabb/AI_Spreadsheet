@@ -42,6 +42,15 @@ class WorkbookFileConverter:
 
         for sheet_index, source_sheet in enumerate(formulas_wb.worksheets):
             imported_sheet = workbook.add_sheet(source_sheet.title)
+            imported_sheet.metadata["freeze_panes"] = str(source_sheet.freeze_panes) if source_sheet.freeze_panes else None
+            imported_sheet.metadata["merged_ranges"] = [str(item) for item in source_sheet.merged_cells.ranges]
+            imported_sheet.metadata["auto_filter"] = source_sheet.auto_filter.ref
+            imported_sheet.metadata["column_widths"] = {
+                key: value.width for key, value in source_sheet.column_dimensions.items() if value.width is not None
+            }
+            imported_sheet.metadata["row_heights"] = {
+                str(key): value.height for key, value in source_sheet.row_dimensions.items() if value.height is not None
+            }
             value_sheet = values_wb.worksheets[sheet_index] if sheet_index < len(values_wb.worksheets) else None
 
             max_row = source_sheet.max_row or 0
@@ -87,6 +96,18 @@ class WorkbookFileConverter:
                 sheet_name = self._make_unique_sheet_name(sheet.name or "Sheet", existing_names)
                 existing_names.add(sheet_name)
                 target_sheet = target.create_sheet(title=sheet_name)
+
+                freeze_panes = sheet.metadata.get("freeze_panes")
+                if freeze_panes:
+                    target_sheet.freeze_panes = freeze_panes
+                for merged_range in sheet.metadata.get("merged_ranges", []):
+                    target_sheet.merge_cells(str(merged_range))
+                if sheet.metadata.get("auto_filter"):
+                    target_sheet.auto_filter.ref = str(sheet.metadata["auto_filter"])
+                for column, width in sheet.metadata.get("column_widths", {}).items():
+                    target_sheet.column_dimensions[str(column)].width = float(width)
+                for row, height in sheet.metadata.get("row_heights", {}).items():
+                    target_sheet.row_dimensions[int(row)].height = float(height)
 
                 for address, cell in sheet.cells.items():
                     target_cell = target_sheet[address]

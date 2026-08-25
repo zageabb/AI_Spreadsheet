@@ -61,6 +61,13 @@ class FormulaEngine:
         """List registered function names."""
         return sorted(self._functions.keys())
 
+    @staticmethod
+    def extract_references(formula: str) -> set[str]:
+        """Return normalized A1 references used by a formula."""
+        if not isinstance(formula, str):
+            return set()
+        return {match.group(0).replace("$", "").upper() for match in re.finditer(r"\$?[A-Za-z]+\$?[1-9][0-9]*", formula)}
+
     def evaluate(self, raw_value: Any, context: dict[str, Any] | None = None) -> Any:
         """Evaluate a value if it is a formula.
 

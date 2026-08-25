@@ -1,5 +1,18 @@
 # AI_Spreadsheet Task Plan
 
+## Spreadsheet core v2 — Phases 1–4
+- [x] Virtualised `QTableView`/`QAbstractTableModel` sparse grid (100,000 rows, 1,024 columns by default)
+- [x] Excel-style coordinates, including AA+ columns, absolute references and quoted sheet names
+- [x] Typed user values and separate formula/calculated-value storage
+- [x] Dependency graph, affected-cell discovery, calculation ordering and circular-reference detection
+- [x] Context Studio visual system translated into a reusable Qt theme
+- [x] Render imported core cell formatting in the desktop grid
+- [x] Preserve frozen panes, merged ranges, filters, column widths and row heights in XLSX round trips
+- [x] Recorded deterministic transformation pipeline: select, rename, filter, sort and fill-null
+- [ ] Extend formula parser to ranges, cross-sheet evaluation and the Excel compatibility function target
+- [ ] Add transformation preview/editor UI and database/API connectors
+- [ ] Preserve charts, validation rules, tables and unsupported XLSX objects
+
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure
 - [ ] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`
