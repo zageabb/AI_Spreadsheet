@@ -44,6 +44,27 @@ def test_formula_supports_same_sheet_reference() -> None:
     assert result == 15.0
 
 
+def test_formula_supports_ranges_and_absolute_references() -> None:
+    engine = _build_engine()
+    values = {"$A$1": 10, "A2": 5, "A3": 2}
+    result = engine.evaluate(
+        "=SUM($A$1:A3)",
+        context={
+            "get_cell_value": lambda ref: values.get(ref),
+            "get_range_values": lambda start, end: [values["$A$1"], values["A2"], values["A3"]],
+        },
+    )
+    assert result == 17.0
+
+
+def test_formula_supports_quoted_cross_sheet_reference() -> None:
+    engine = _build_engine()
+    assert engine.evaluate(
+        "='Sales Data'!B2*2",
+        context={"get_cell_value": lambda ref: 12 if ref == "'Sales Data'!B2" else None},
+    ) == 24.0
+
+
 def test_formula_supports_nested_function_calls_and_comparison() -> None:
     engine = _build_engine()
     result = engine.evaluate("=IF(SUM(1,2,3)=6, CONCAT(\"ok\", \"!\"), \"bad\")")

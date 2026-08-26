@@ -80,6 +80,10 @@ class SpreadsheetTableModel(QAbstractTableModel):
     def flags(self, index: QModelIndex):
         return super().flags(index) | Qt.ItemFlag.ItemIsEditable
 
+    def refresh(self) -> None:
+        """Notify the view after workbook-wide recalculation."""
+        self.layoutChanged.emit()
+
     @staticmethod
     def address(index: QModelIndex) -> str:
         return CellAddress(index.row(), index.column()).a1(False)

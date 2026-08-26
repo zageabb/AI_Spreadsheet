@@ -9,7 +9,9 @@
 - [x] Render imported core cell formatting in the desktop grid
 - [x] Preserve frozen panes, merged ranges, filters, column widths and row heights in XLSX round trips
 - [x] Recorded deterministic transformation pipeline: select, rename, filter, sort and fill-null
-- [ ] Extend formula parser to ranges, cross-sheet evaluation and the Excel compatibility function target
+- [x] Formula ranges, `$` references, quoted cross-sheet references and workbook-wide recalculation
+- [x] Recalculate downstream cells in dependency order and report circular references as `#CIRC!`
+- [ ] Extend the Excel compatibility function target and add date/lookup functions
 - [ ] Add transformation preview/editor UI and database/API connectors
 - [ ] Preserve charts, validation rules, tables and unsupported XLSX objects
 

@@ -7,7 +7,10 @@ import re
 from typing import Any, Callable, Iterable
 
 
-CELL_REF_PATTERN = re.compile(r"^[A-Za-z]+[1-9][0-9]*$")
+CELL_REF_PATTERN = re.compile(
+    r"^(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?[A-Za-z]+\$?[1-9][0-9]*$"
+)
+CELL_REF_TOKEN = r"(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?[A-Za-z]+\$?[1-9][0-9]*"
 
 
 class FormulaEvaluationError(Exception):
@@ -63,22 +66,21 @@ class FormulaEngine:
 
     @staticmethod
     def extract_references(formula: str) -> set[str]:
-        """Return normalized A1 references used by a formula."""
+        """Return reference tokens used by a formula, preserving sheet names."""
         if not isinstance(formula, str):
             return set()
-        return {match.group(0).replace("$", "").upper() for match in re.finditer(r"\$?[A-Za-z]+\$?[1-9][0-9]*", formula)}
+        return {token.value for token in _tokenize(formula.lstrip("=")) if token.kind == "CELL"}
 
     def evaluate(self, raw_value: Any, context: dict[str, Any] | None = None) -> Any:
         """Evaluate a value if it is a formula.
 
         Supported now:
         - Numeric and string literals
-        - Same-sheet references (e.g., ``A1``)
+        - Same-sheet and cross-sheet references (e.g., ``A1``, ``'Sales Data'!B2``)
+        - Absolute/mixed references and ranges (e.g., ``$A1:B$20``)
         - Built-in and plugin function calls (e.g., ``SUM(A1, 2)``)
         - Basic operators: ``+ - * / ^`` and comparisons
 
-        Future-ready scaffold:
-        - Cross-sheet references are intentionally not yet implemented.
         """
         if not isinstance(raw_value, str) or not raw_value.startswith("="):
             return raw_value
@@ -161,14 +163,20 @@ class _Parser:
             self._consume("RPAREN")
             return value
 
+        if token.kind == "CELL":
+            reference = self._consume("CELL").value
+            if self._peek().kind == "COLON":
+                self._consume("COLON")
+                end = self._consume("CELL").value
+                return self._resolve_range(reference, end)
+            return self._resolve_reference(reference)
+
         if token.kind == "IDENT":
             ident = self._consume("IDENT").value
             if self._peek().kind == "LPAREN":
                 return self._parse_function_call(ident)
             if ident.upper() in {"TRUE", "FALSE"}:
                 return ident.upper() == "TRUE"
-            if CELL_REF_PATTERN.match(ident):
-                return self._resolve_reference(ident.upper())
             raise FormulaEvaluationError("#NAME?", ident)
 
         raise FormulaEvaluationError("#PARSE!", f"Unexpected token: {token.kind}")
@@ -198,9 +206,6 @@ class _Parser:
             raise FormulaEvaluationError("#VALUE!", str(exc)) from exc
 
     def _resolve_reference(self, reference: str) -> Any:
-        if "!" in reference:
-            raise FormulaEvaluationError("#REF!", "Cross-sheet references not implemented yet")
-
         resolver = self.context.get("get_cell_value")
         if resolver is None:
             raise FormulaEvaluationError("#REF!", f"No resolver for {reference}")
@@ -215,6 +220,17 @@ class _Parser:
         if isinstance(resolved, str) and resolved.startswith("#"):
             raise FormulaEvaluationError(resolved)
         return resolved
+
+    def _resolve_range(self, start: str, end: str) -> Any:
+        resolver = self.context.get("get_range_values")
+        if resolver is None:
+            raise FormulaEvaluationError("#REF!", f"No range resolver for {start}:{end}")
+        try:
+            return resolver(start, end)
+        except FormulaEvaluationError:
+            raise
+        except Exception as exc:
+            raise FormulaEvaluationError("#REF!", str(exc)) from exc
 
     @staticmethod
     def _coerce_number(value: Any) -> float:
@@ -285,6 +301,7 @@ def _tokenize(expression: str) -> list[Token]:
         ("SPACE", r"[ \t\r\n]+"),
         ("NUMBER", r"\d+(?:\.\d+)?"),
         ("STRING", r'"([^"\\]|\\.)*"'),
+        ("CELL", CELL_REF_TOKEN),
         ("LE", r"<="),
         ("GE", r">="),
         ("NE", r"<>|!="),
@@ -297,6 +314,7 @@ def _tokenize(expression: str) -> list[Token]:
         ("SLASH", r"/"),
         ("CARET", r"\^"),
         ("COMMA", r","),
+        ("COLON", r":"),
         ("LPAREN", r"\("),
         ("RPAREN", r"\)"),
         ("IDENT", r"[A-Za-z_][A-Za-z0-9_]*"),

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDia
 
 from app.core.coordinates import CellAddress
 from app.engine.formula_engine import FormulaEngine
+from app.engine.calculation_service import WorkbookCalculationService
 from app.engine.plugin_loader import PluginLoader
 from app.formulas.registry import register_builtin_functions
 from app.models.sheet import Worksheet
@@ -27,6 +28,7 @@ class MainWindow(QMainWindow):
         self.storage, self.converter = JsonWorkbookStorage(), WorkbookFileConverter()
         self.engine = FormulaEngine(); register_builtin_functions(self.engine); PluginLoader().load(self.engine)
         self.workbook = Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1")
+        self.calculation = WorkbookCalculationService(self.workbook, self.engine)
         self.current_file_path: str | None = None; self.dirty = False
         self._actions(); self._chrome(); self._tabs(); self._title()
 
@@ -75,9 +77,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(self.workbook.active_sheet_index); self.tabs.blockSignals(False)
 
     def _evaluate(self, sheet, _address, formula):
-        def resolve(ref):
-            cell=sheet.cells.get(ref.replace("$","").upper()); return cell.value if cell else None
-        return self.engine.evaluate(formula,{"get_cell_value":resolve})
+        return self.calculation.evaluate_formula(sheet.name, formula)
 
     def _current(self):
         widget=self.tabs.currentWidget(); return widget if isinstance(widget,QTableView) else None
@@ -90,7 +90,13 @@ class MainWindow(QMainWindow):
     def _selection(self,*_):
         view=self._current(); self.selection_status.setText(f"Selection: {len(view.selectionModel().selectedIndexes()) if view else 0}")
 
-    def _edited(self,*_): self._mark_dirty()
+    def _edited(self,address,*_):
+        sheet=self.workbook.get_active_sheet()
+        self.calculation.recalculate({self.calculation.cell_key(sheet.name,address)})
+        for index in range(self.tabs.count()):
+            view=self.tabs.widget(index)
+            if isinstance(view,QTableView): view.model().refresh()
+        self._mark_dirty()
     def _mark_dirty(self): self.dirty=True; self._title()
     def _tab_changed(self,index):
         if index>=0:self.workbook.active_sheet_index=index
@@ -107,14 +113,14 @@ class MainWindow(QMainWindow):
             index=view.model().index(address.row,address.column); view.setCurrentIndex(index); view.scrollTo(index)
 
     def _new(self):
-        self.workbook=Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1"); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
+        self.workbook=Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1"); self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
 
     def _open(self):
         path,_=QFileDialog.getOpenFileName(self,"Open workbook","","AI Workbook (*.json)")
         if not path:return
         try:self.workbook=self.storage.load_workbook(path)
         except OSError as exc: QMessageBox.warning(self,"Open failed",str(exc)); return
-        self.current_file_path=path; self.dirty=False; self._tabs(); self._title()
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=False; self._tabs(); self._title()
 
     def _save(self):
         if not self.current_file_path:self._save_as(); return
@@ -129,7 +135,7 @@ class MainWindow(QMainWindow):
         if not path:return
         try:self.workbook=(self.converter.import_xlsx(path) if kind=="xlsx" else self.converter.import_csv(path))
         except WorkbookConversionError as exc: QMessageBox.warning(self,"Import failed",str(exc)); return
-        self.current_file_path=None; self.dirty=True; self._tabs(); self._title()
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=None; self.dirty=True; self._tabs(); self._title()
 
     def _export(self,kind):
         suffix=".xlsx" if kind=="xlsx" else ".csv"; pattern="Excel Workbook (*.xlsx)" if kind=="xlsx" else "CSV File (*.csv)"; path,_=QFileDialog.getSaveFileName(self,"Export","",pattern)
