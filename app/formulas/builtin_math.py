@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from math import isfinite
+from math import floor, isfinite, sqrt
 from typing import Any
 
 from app.engine.formula_engine import flatten_args
@@ -69,3 +69,44 @@ def ROUND(number: Any, digits: Any = 0) -> float:  # noqa: N802
 
 def ABS(number: Any) -> float:  # noqa: N802
     return float(abs(_to_number(number)))
+
+
+def INT(number: Any) -> float:  # noqa: N802
+    return float(floor(_to_number(number)))
+
+
+def MOD(number: Any, divisor: Any) -> float:  # noqa: N802
+    denominator = _to_number(divisor)
+    if denominator == 0:
+        raise ValueError("#DIV/0!")
+    return float(_to_number(number) % denominator)
+
+
+def POWER(number: Any, power: Any) -> float:  # noqa: N802
+    return float(_to_number(number) ** _to_number(power))
+
+
+def SQRT(number: Any) -> float:  # noqa: N802
+    value = _to_number(number)
+    if value < 0:
+        raise ValueError("#NUM!")
+    return float(sqrt(value))
+
+
+def SUMPRODUCT(*arrays: Any) -> float:  # noqa: N802
+    vectors = [flatten_args([array]) for array in arrays]
+    if not vectors:
+        return 0.0
+    if len({len(vector) for vector in vectors}) != 1:
+        raise ValueError("#VALUE!")
+    return float(sum(
+        _to_number(value)
+        for value in (product for items in zip(*vectors) for product in [_product(items)])
+    ))
+
+
+def _product(values: tuple[Any, ...]) -> float:
+    result = 1.0
+    for value in values:
+        result *= _to_number(value)
+    return result

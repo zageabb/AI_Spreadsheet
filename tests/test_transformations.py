@@ -1,4 +1,6 @@
-from app.services.transformations import TransformationPipeline, TransformationStep
+from app.models.sheet import Worksheet
+from app.services.transformations import (TransformationPipeline, TransformationStep,
+    rows_to_worksheet, worksheet_to_rows)
 
 
 def test_recorded_pipeline_is_deterministic():
@@ -9,3 +11,11 @@ def test_recorded_pipeline_is_deterministic():
         TransformationStep("rename", {"mapping": {"Value": "Cost"}}),
     ])
     assert pipeline.apply(rows) == [{"Supplier": "A", "Cost": 2}, {"Supplier": "A", "Cost": 3}]
+
+
+def test_rows_round_trip_through_worksheet():
+    rows = [{"Supplier": "A", "Cost": 2}, {"Supplier": "B", "Cost": None}]
+    sheet = Worksheet(name="Data")
+    rows_to_worksheet(rows, sheet)
+    assert worksheet_to_rows(sheet) == rows
+    assert sheet.metadata["transformation_columns"] == ["Supplier", "Cost"]

@@ -31,6 +31,16 @@ def test_starter_function_set_is_registered() -> None:
         "LEFT",
         "RIGHT",
         "LEN",
+        "VLOOKUP",
+        "XLOOKUP",
+        "INDEX",
+        "MATCH",
+        "COUNTIF",
+        "SUMIF",
+        "DATE",
+        "TODAY",
+        "TEXTJOIN",
+        "SUMPRODUCT",
     ]:
         assert engine.has_function(fn_name)
 

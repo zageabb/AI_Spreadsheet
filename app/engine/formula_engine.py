@@ -30,6 +30,15 @@ class Token:
     value: str
 
 
+class RangeValue(list):
+    """Two-dimensional range payload that remains flattenable by aggregates."""
+
+    def __init__(self, rows: list[list[Any]]) -> None:
+        super().__init__(rows)
+        self.height = len(rows)
+        self.width = max((len(row) for row in rows), default=0)
+
+
 class FormulaEngine:
     """Formula engine with parser, evaluator, and function registry."""
 
@@ -203,6 +212,9 @@ class _Parser:
         except FormulaEvaluationError:
             raise
         except Exception as exc:
+            code = str(exc)
+            if code.startswith("#"):
+                raise FormulaEvaluationError(code) from exc
             raise FormulaEvaluationError("#VALUE!", str(exc)) from exc
 
     def _resolve_reference(self, reference: str) -> Any:

@@ -11,8 +11,11 @@
 - [x] Recorded deterministic transformation pipeline: select, rename, filter, sort and fill-null
 - [x] Formula ranges, `$` references, quoted cross-sheet references and workbook-wide recalculation
 - [x] Recalculate downstream cells in dependency order and report circular references as `#CIRC!`
-- [ ] Extend the Excel compatibility function target and add date/lookup functions
-- [ ] Add transformation preview/editor UI and database/API connectors
+- [x] Expand compatibility with lookup, conditional aggregate, date, text and math functions
+- [ ] Add lazy error-handling functions, dynamic arrays and structured table references
+- [x] Add a Context Studio-styled transformation step builder with a 200-row preview
+- [x] Persist applied transformation steps in worksheet metadata
+- [ ] Add refreshable database/API connectors and pipeline re-run controls
 - [ ] Preserve charts, validation rules, tables and unsupported XLSX objects
 
 ## Milestone 1 — MVP desktop spreadsheet

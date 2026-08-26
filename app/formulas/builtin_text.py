@@ -25,3 +25,43 @@ def RIGHT(text: Any, num_chars: Any = 1) -> str:  # noqa: N802
 
 def LEN(text: Any) -> float:  # noqa: N802
     return float(len("" if text is None else str(text)))
+
+
+def MID(text: Any, start_num: Any, num_chars: Any) -> str:  # noqa: N802
+    source = "" if text is None else str(text)
+    start = max(0, int(float(start_num)) - 1)
+    size = max(0, int(float(num_chars)))
+    return source[start:start + size]
+
+
+def TRIM(text: Any) -> str:  # noqa: N802
+    return " ".join(("" if text is None else str(text)).split())
+
+
+def UPPER(text: Any) -> str:  # noqa: N802
+    return ("" if text is None else str(text)).upper()
+
+
+def LOWER(text: Any) -> str:  # noqa: N802
+    return ("" if text is None else str(text)).lower()
+
+
+def SUBSTITUTE(text: Any, old_text: Any, new_text: Any, instance_num: Any = None) -> str:  # noqa: N802
+    source, old, new = str(text), str(old_text), str(new_text)
+    if instance_num is None:
+        return source.replace(old, new)
+    wanted = int(float(instance_num))
+    if wanted < 1:
+        raise ValueError("#VALUE!")
+    parts = source.split(old)
+    if wanted >= len(parts):
+        return source
+    return old.join(parts[:wanted]) + new + old.join(parts[wanted:])
+
+
+def TEXTJOIN(delimiter: Any, ignore_empty: Any, *parts: Any) -> str:  # noqa: N802
+    from app.engine.formula_engine import flatten_args
+    values = flatten_args(parts)
+    if bool(ignore_empty):
+        values = [value for value in values if value not in (None, "")]
+    return str(delimiter).join("" if value is None else str(value) for value in values)

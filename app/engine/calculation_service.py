@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.core.coordinates import CellAddress, CellRange
 from app.engine.dependency_graph import CircularReferenceError, DependencyGraph
-from app.engine.formula_engine import FormulaEngine
+from app.engine.formula_engine import FormulaEngine, RangeValue
 from app.models.workbook import Workbook
 
 
@@ -89,13 +89,20 @@ class WorkbookCalculationService:
         cell = sheet.cells.get(address.a1(False))
         return cell.value if cell else None
 
-    def _range_values(self, start: str, end: str, current_sheet: str) -> list[object]:
-        values = []
-        for key in self._range_keys(start, end, current_sheet):
-            sheet_name, address = key.rsplit("!", 1)
-            cell = self._sheet(sheet_name).cells.get(address)
-            values.append(cell.value if cell else None)
-        return values
+    def _range_values(self, start: str, end: str, current_sheet: str) -> RangeValue:
+        first = CellAddress.parse(start)
+        sheet_name = first.sheet or current_sheet
+        keys = self._range_keys(start, end, current_sheet)
+        second = CellAddress.parse(end)
+        height = abs(second.row - first.row) + 1
+        width = abs(second.column - first.column) + 1
+        flat_values = []
+        for key in keys:
+            resolved_sheet, address = key.rsplit("!", 1)
+            cell = self._sheet(resolved_sheet).cells.get(address)
+            flat_values.append(cell.value if cell else None)
+        rows = [flat_values[index:index + width] for index in range(0, height * width, width)]
+        return RangeValue(rows)
 
     def _range_keys(self, start: str, end: str, current_sheet: str) -> list[str]:
         first = CellAddress.parse(start)

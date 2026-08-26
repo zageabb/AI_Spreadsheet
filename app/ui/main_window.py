@@ -16,9 +16,11 @@ from app.formulas.registry import register_builtin_functions
 from app.models.sheet import Worksheet
 from app.models.workbook import Workbook
 from app.services.file_conversion import WorkbookConversionError, WorkbookFileConverter
+from app.services.transformations import rows_to_worksheet, worksheet_to_rows
 from app.storage.json_storage import JsonWorkbookStorage
 from app.ui.spreadsheet_model import SpreadsheetTableModel
 from app.ui.theme import CONTEXT_STUDIO_QSS
+from app.ui.transformation_dialog import TransformationDialog
 
 
 class MainWindow(QMainWindow):
@@ -51,11 +53,13 @@ class MainWindow(QMainWindow):
         self.delete_a=self._make_action("Delete Sheet",None,self._delete_sheet)
         self.copy_a=self._make_action("Copy",QKeySequence.StandardKey.Copy,self._copy)
         self.paste_a=self._make_action("Paste",QKeySequence.StandardKey.Paste,self._paste)
+        self.transform_a=self._make_action("Transform Data","Ctrl+Shift+T",self._transform_data)
 
     def _chrome(self):
         file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a,self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out])
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.copy_a,self.paste_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
+        data_menu=self.menuBar().addMenu("Data"); data_menu.addAction(self.transform_a)
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         bar.addActions([self.new_a,self.open_a,self.save_a]); bar.addSeparator(); bar.addActions([self.copy_a,self.paste_a]); bar.addSeparator(); bar.addAction(self.add_a); self.addToolBar(bar)
         root=QWidget(); layout=QVBoxLayout(root); layout.setContentsMargins(10,10,10,8)
@@ -171,6 +175,17 @@ class MainWindow(QMainWindow):
         start=view.currentIndex()
         for ro,row in enumerate(QApplication.clipboard().text().splitlines()):
             for co,value in enumerate(row.split("\t")):view.model().setData(view.model().index(start.row()+ro,start.column()+co),value)
+
+    def _transform_data(self):
+        sheet=self.workbook.get_active_sheet(); rows=worksheet_to_rows(sheet)
+        if not rows:
+            QMessageBox.information(self,"Transform Data","The active sheet needs a header row and at least one data row."); return
+        dialog=TransformationDialog(rows,self)
+        if not dialog.exec():return
+        rows_to_worksheet(dialog.result_rows,sheet)
+        sheet.metadata["transformations"]=[step.to_dict() for step in dialog.steps]
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
+        self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Applied {len(dialog.steps)} transformation step(s)",3000)
 
     def _unique(self,base,exclude=None):
         names={s.name for i,s in enumerate(self.workbook.sheets) if i!=exclude}; n=2

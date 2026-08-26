@@ -83,3 +83,19 @@ def worksheet_to_rows(sheet: Worksheet, header_row: int = 0) -> list[dict[str, A
             record[header] = cell.value if cell else None
         rows.append(record)
     return rows
+
+
+def rows_to_worksheet(rows: list[dict[str, Any]], sheet: Worksheet) -> None:
+    """Replace worksheet values with transformed rows, retaining sheet identity."""
+    sheet.cells.clear()
+    if not rows:
+        return
+    headers = list(rows[0])
+    for column, header in enumerate(headers):
+        sheet.get_cell(f"{column_index_to_label(column)}1").value = header
+    for row_index, row in enumerate(rows, start=2):
+        for column, header in enumerate(headers):
+            value = row.get(header)
+            if value is not None:
+                sheet.get_cell(f"{column_index_to_label(column)}{row_index}").value = value
+    sheet.metadata["transformation_columns"] = headers
