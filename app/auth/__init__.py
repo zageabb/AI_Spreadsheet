@@ -23,3 +23,13 @@ __all__ = [
     "SessionTokenManager",
     "UserRecord",
 ]
+"""Authentication exports."""
+
+from app.auth.service import (
+    AuthService,
+    JsonUserRepository,
+    SessionPrincipal,
+    create_auth_service,
+)
+
+__all__ = ["AuthService", "JsonUserRepository", "SessionPrincipal", "create_auth_service"]

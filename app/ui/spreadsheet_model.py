@@ -17,12 +17,14 @@ class SpreadsheetTableModel(QAbstractTableModel):
     cell_edited = Signal(str, object, object)
 
     def __init__(self, worksheet: Worksheet, rows: int = 100_000, columns: int = 1_024,
-                 evaluator: Callable[[Worksheet, str, str], Any] | None = None) -> None:
+                 evaluator: Callable[[Worksheet, str, str], Any] | None = None,
+                 editable: bool = True) -> None:
         super().__init__()
         self.worksheet = worksheet
         self.logical_rows = max(rows, self._used_rows() + 100)
         self.logical_columns = max(columns, self._used_columns() + 26)
         self.evaluator = evaluator
+        self.editable = editable
 
     def rowCount(self, _parent=QModelIndex()) -> int:
         return self.logical_rows
@@ -61,7 +63,7 @@ class SpreadsheetTableModel(QAbstractTableModel):
         return None
 
     def setData(self, index: QModelIndex, value: Any, role: int = Qt.ItemDataRole.EditRole) -> bool:
-        if role != Qt.ItemDataRole.EditRole or not index.isValid():
+        if not self.editable or role != Qt.ItemDataRole.EditRole or not index.isValid():
             return False
         address = self.address(index)
         cell = self.worksheet.get_cell(address)
@@ -78,7 +80,8 @@ class SpreadsheetTableModel(QAbstractTableModel):
         return True
 
     def flags(self, index: QModelIndex):
-        return super().flags(index) | Qt.ItemFlag.ItemIsEditable
+        flags = super().flags(index)
+        return flags | Qt.ItemFlag.ItemIsEditable if self.editable else flags
 
     def refresh(self) -> None:
         """Notify the view after workbook-wide recalculation."""

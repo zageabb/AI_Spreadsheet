@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +18,7 @@ def migrate_directory(
     key_prefix: str = "",
     dry_run: bool = False,
     continue_on_error: bool = False,
+    owner_email: str | None = None,
 ) -> tuple[int, list[tuple[Path, str]]]:
     """Migrate every JSON workbook and return successes plus failures."""
     json_storage = JsonWorkbookStorage()
@@ -24,10 +26,19 @@ def migrate_directory(
 
     migrated = 0
     failures: list[tuple[Path, str]] = []
+    identity_store = Path(os.getenv("AUTH_USER_STORE", "./data/users.json")).expanduser().resolve()
     for source in sorted(json_dir.glob("*.json")):
+        if source.resolve() == identity_store:
+            continue
         external_key = f"{key_prefix}{source.stem}"
         try:
             workbook = json_storage.load_workbook(str(source))
+            if owner_email:
+                from app.permissions.service import PermissionService
+
+                workbook.permissions = PermissionService().assign_owner(
+                    workbook.permissions, owner_email
+                )
             if not dry_run:
                 postgres_storage.save_workbook(external_key, workbook)
             migrated += 1
@@ -48,6 +59,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--key-prefix", default="", help="Prefix applied to PostgreSQL external keys.")
     parser.add_argument("--dry-run", action="store_true", help="Validate files without writing to PostgreSQL.")
     parser.add_argument("--continue-on-error", action="store_true")
+    parser.add_argument(
+        "--owner-email",
+        help="Assign an owner to every migrated workbook for authenticated access.",
+    )
     return parser
 
 
@@ -62,6 +77,7 @@ def main() -> int:
         key_prefix=args.key_prefix,
         dry_run=args.dry_run,
         continue_on_error=args.continue_on_error,
+        owner_email=args.owner_email,
     )
     print(f"Migration completed. {total} succeeded; {len(failures)} failed.")
     return 1 if failures else 0

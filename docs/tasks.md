@@ -74,12 +74,12 @@
 - [ ] Preserve basic formatting where practical
 
 ## Milestone 5 — Authentication and permissions
-- [ ] Email login
-- [ ] Password hashing
-- [ ] Registration scaffold
-- [ ] Session/token handling
-- [ ] Owner/editor/viewer roles
-- [ ] Grant/revoke access workflows
+- [x] Email login
+- [x] Password hashing
+- [x] Registration scaffold
+- [x] Session/token handling
+- [x] Owner/editor/viewer roles
+- [x] Grant/revoke access workflows
 
 ## Milestone 6 — PostgreSQL backend
 - [x] Schema SQL

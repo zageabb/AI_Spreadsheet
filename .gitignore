@@ -22,3 +22,7 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local identity data
+data/users.json
+data/users.json.tmp

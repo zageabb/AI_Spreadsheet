@@ -39,10 +39,10 @@ python -m db.json_to_postgres --source-dir data --dry-run
 Then run the migration:
 
 ```bash
-python -m db.json_to_postgres --source-dir data --key-prefix imported/
+python -m db.json_to_postgres --source-dir data --key-prefix imported/ --owner-email owner@example.com
 ```
 
-The migration is repeatable: a matching external key is updated transactionally. Add `--continue-on-error` to produce a complete failure summary instead of stopping at the first bad workbook. Keep the JSON originals until the migrated workbooks have been opened and verified.
+The migration is repeatable: a matching external key is updated transactionally. `--owner-email` makes the imported workbooks available through authenticated access. Add `--continue-on-error` to produce a complete failure summary instead of stopping at the first bad workbook. Keep the JSON originals until the migrated workbooks have been opened and verified.
 
 ## Production notes
 

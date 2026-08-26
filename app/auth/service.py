@@ -7,7 +7,9 @@ import hashlib
 import hmac
 import json
 import os
+from pathlib import Path
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -65,6 +67,81 @@ class InMemoryUserRepository:
         return self._users_by_email.get(_normalize_email(email))
 
 
+class JsonUserRepository:
+    """Persistent local identity repository containing password hashes only."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path).expanduser()
+        self._lock = threading.RLock()
+
+    def create_user(self, email: str, password_hash: str) -> UserRecord:
+        normalized_email = _normalize_email(email)
+        with self._lock:
+            users = self._read_users()
+            if normalized_email in users:
+                raise ValueError("User already exists for this email address.")
+            user = UserRecord(
+                user_id=secrets.token_hex(16),
+                email=normalized_email,
+                password_hash=password_hash,
+            )
+            users[normalized_email] = user
+            self._write_users(users)
+            return user
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        with self._lock:
+            return self._read_users().get(_normalize_email(email))
+
+    def has_users(self) -> bool:
+        """Return whether at least one local account has been registered."""
+        with self._lock:
+            return bool(self._read_users())
+
+    def _read_users(self) -> dict[str, UserRecord]:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Local identity store is unreadable: {self.path}") from exc
+        raw_users = payload.get("users", []) if isinstance(payload, dict) else []
+        users: dict[str, UserRecord] = {}
+        for entry in raw_users if isinstance(raw_users, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                normalized = _normalize_email(entry.get("email"))
+            except ValueError:
+                continue
+            user_id = str(entry.get("user_id") or "").strip()
+            password_hash = str(entry.get("password_hash") or "")
+            if user_id and password_hash:
+                users[normalized] = UserRecord(user_id, normalized, password_hash)
+        return users
+
+    def _write_users(self, users: dict[str, UserRecord]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
+        payload = {
+            "schema_version": 1,
+            "users": [
+                {
+                    "user_id": user.user_id,
+                    "email": user.email,
+                    "password_hash": user.password_hash,
+                }
+                for user in sorted(users.values(), key=lambda item: item.email)
+            ],
+        }
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            temporary.chmod(0o600)
+        except OSError:
+            pass
+        temporary.replace(self.path)
+
+
 class PostgresUserRepository:
     """PostgreSQL-backed user repository for registration/login flows."""
 
@@ -73,13 +150,15 @@ class PostgresUserRepository:
 
     def create_user(self, email: str, password_hash: str) -> UserRecord:
         normalized_email = _normalize_email(email)
-        with self.db.connection() as conn:
+        with self.db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO users (email, password_hash)
                     VALUES (%s, %s)
-                    ON CONFLICT (email) DO NOTHING
+                    ON CONFLICT (email) DO UPDATE
+                    SET password_hash = EXCLUDED.password_hash
+                    WHERE users.password_hash IS NULL OR users.password_hash = ''
                     RETURNING id, email, password_hash
                     """,
                     (normalized_email, password_hash),
@@ -87,8 +166,6 @@ class PostgresUserRepository:
                 row = cur.fetchone()
                 if row is None:
                     raise ValueError("User already exists for this email address.")
-            conn.commit()
-
         return UserRecord(
             user_id=str(row["id"]),
             email=str(row["email"]),
@@ -192,13 +269,16 @@ class SessionTokenManager:
 
         try:
             payload = json.loads(base64.urlsafe_b64decode(encoded_payload.encode("ascii")))
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, TypeError, ValueError):
             return None
 
-        expires_at = int(payload.get("exp", 0))
-        issued_at = int(payload.get("iat", 0))
+        try:
+            expires_at = int(payload.get("exp", 0))
+            issued_at = int(payload.get("iat", 0))
+        except (TypeError, ValueError):
+            return None
         now = int(time.time())
-        if expires_at <= now or issued_at <= 0:
+        if expires_at <= now or issued_at <= 0 or issued_at > now + 60 or expires_at <= issued_at:
             return None
 
         user_id = str(payload.get("user_id") or "").strip()
@@ -305,16 +385,58 @@ class AuthService:
         return self.session_manager.validate_token(token)
 
 
+def create_auth_service() -> AuthService:
+    """Build the configured desktop authentication service.
+
+    JSON mode stores hashed local accounts in ``AUTH_USER_STORE``. PostgreSQL
+    mode uses the shared users table. A random in-process signing key keeps the
+    zero-configuration desktop path usable; configure ``AUTH_SESSION_SECRET``
+    when sessions must survive across processes.
+    """
+    provider = os.getenv("AUTH_IDENTITY_PROVIDER", "local").strip().lower()
+    if provider != "local":
+        raise ValueError(f"AUTH_IDENTITY_PROVIDER is not configured: {provider}")
+
+    backend = os.getenv("STORAGE_BACKEND", "json").strip().lower()
+    if backend == "postgres":
+        repository: UserRepository = PostgresUserRepository()
+    elif backend == "json":
+        repository = JsonUserRepository(os.getenv("AUTH_USER_STORE", "./data/users.json"))
+    else:
+        raise ValueError("STORAGE_BACKEND must be either 'json' or 'postgres'.")
+
+    configured_secret = os.getenv("AUTH_SESSION_SECRET", "").strip()
+    if configured_secret == "replace_with_long_random_secret":
+        configured_secret = ""
+    if os.getenv("APP_ENV", "development").strip().lower() == "production" and len(configured_secret) < 32:
+        raise ValueError("AUTH_SESSION_SECRET must contain at least 32 characters in production.")
+    session_secret = configured_secret or secrets.token_urlsafe(32)
+    return AuthService(
+        repository=repository,
+        session_manager=SessionTokenManager(secret=session_secret),
+    )
+
+
 def _normalize_email(email: str) -> str:
     if not isinstance(email, str):
         raise ValueError("A valid email address is required.")
 
     normalized = email.lower().strip()
-    if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+    if (
+        "@" not in normalized
+        or normalized.startswith("@")
+        or normalized.endswith("@")
+        or "." not in normalized.rsplit("@", 1)[1]
+        or any(character.isspace() for character in normalized)
+    ):
         raise ValueError("A valid email address is required.")
     return normalized
 
 
 def _validate_password(password: str) -> None:
+    if not isinstance(password, str):
+        raise ValueError("Password must be a string.")
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters long.")
+    if len(password) > 1024:
+        raise ValueError("Password is too long.")

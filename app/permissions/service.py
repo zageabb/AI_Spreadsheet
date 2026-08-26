@@ -49,7 +49,11 @@ class PermissionService:
     ) -> dict[str, Any]:
         """Transfer workbook ownership from current owner to a new owner."""
         self._require_owner(actor_email=actor_email, permissions=permissions)
-        return self.assign_owner(permissions=permissions, owner_email=new_owner_email)
+        previous_owner = _normalize_email(actor_email)
+        updated = self.assign_owner(permissions=permissions, owner_email=new_owner_email)
+        if updated["owner"] != previous_owner:
+            updated = self.grant_editor_access(updated, previous_owner)
+        return updated
 
     def invite_user_as_owner(
         self,
@@ -158,6 +162,22 @@ class PermissionService:
 
         return None
 
+    def resolve_or_claim(
+        self,
+        user_email: str,
+        workbook: Workbook,
+    ) -> tuple[Role | None, bool]:
+        """Resolve access, assigning legacy unowned workbooks to the user.
+
+        Returns the effective role and whether permissions were changed.
+        """
+        normalized = self._normalized_permissions(workbook.permissions)
+        if normalized["owner"] is None:
+            workbook.permissions = self.assign_owner(normalized, user_email)
+            return "owner", True
+        workbook.permissions = normalized
+        return self.resolve_role(user_email, workbook), False
+
     def _require_owner(self, actor_email: str, permissions: dict[str, Any]) -> None:
         actor = _normalize_email(actor_email)
         normalized_permissions = self._normalized_permissions(permissions)
@@ -243,8 +263,9 @@ class SharingWorkflowService:
         role: Role,
         workbook_link: str = "",
     ) -> Workbook:
-        workbook.permissions = self.permission_service.grant_access(
+        workbook.permissions = self.permission_service.invite_user_as_owner(
             permissions=workbook.permissions,
+            actor_email=actor_email,
             user_email=target_email,
             role=role,
         )

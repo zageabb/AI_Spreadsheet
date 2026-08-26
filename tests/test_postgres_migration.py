@@ -14,3 +14,16 @@ def test_migration_dry_run_validates_without_database(tmp_path):
 
     assert migrated == 1
     assert failures == []
+
+
+def test_migration_can_assign_owner(tmp_path):
+    workbook = Workbook(name="Budget")
+    workbook.add_sheet("Inputs")
+    JsonWorkbookStorage().save_workbook(str(tmp_path / "budget.json"), workbook)
+
+    migrated, failures = migrate_directory(
+        tmp_path, dry_run=True, owner_email="owner@example.com"
+    )
+
+    assert migrated == 1
+    assert failures == []

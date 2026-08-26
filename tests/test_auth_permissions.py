@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from app.auth.service import AuthService, InMemoryUserRepository, PasswordHasher, SessionTokenManager
+from app.auth.service import (
+    AuthService,
+    InMemoryUserRepository,
+    JsonUserRepository,
+    PasswordHasher,
+    SessionTokenManager,
+    create_auth_service,
+)
 from app.models.workbook import Workbook
-from app.permissions.service import PermissionService
+from app.permissions.service import PermissionService, SharingWorkflowService
 
 
 def _build_auth_service() -> AuthService:
@@ -122,3 +129,106 @@ def test_permission_service_rejects_invalid_email_type():
 
     with pytest.raises(ValueError):
         service.grant_viewer_access({"owner": "owner@example.com", "shared_with": []}, None)  # type: ignore[arg-type]
+
+
+def test_json_user_repository_persists_only_hashed_credentials(tmp_path):
+    path = tmp_path / "users.json"
+    auth = AuthService(
+        repository=JsonUserRepository(path),
+        password_hasher=PasswordHasher(iterations=1000),
+        session_manager=SessionTokenManager(secret="unit-test-secret"),
+    )
+
+    auth.register_user("Local@Example.com", "private-pass")
+    reloaded = JsonUserRepository(path).get_user_by_email("local@example.com")
+
+    assert reloaded is not None
+    assert reloaded.email == "local@example.com"
+    assert reloaded.password_hash.startswith("pbkdf2_sha256$")
+    assert "private-pass" not in path.read_text(encoding="utf-8")
+
+
+def test_transfer_ownership_keeps_previous_owner_as_editor():
+    service = PermissionService()
+    permissions = service.assign_owner({}, "owner@example.com")
+
+    transferred = service.transfer_ownership(
+        permissions,
+        actor_email="owner@example.com",
+        new_owner_email="new-owner@example.com",
+    )
+
+    workbook = Workbook(name="Plan", permissions=transferred)
+    assert service.resolve_role("new-owner@example.com", workbook) == "owner"
+    assert service.resolve_role("owner@example.com", workbook) == "editor"
+
+
+def test_legacy_unowned_workbook_is_claimed_once():
+    service = PermissionService()
+    workbook = Workbook(name="Legacy")
+
+    role, changed = service.resolve_or_claim("owner@example.com", workbook)
+    other_role, changed_again = service.resolve_or_claim("other@example.com", workbook)
+
+    assert role == "owner"
+    assert changed is True
+    assert other_role is None
+    assert changed_again is False
+
+
+def test_sharing_workflow_rejects_non_owner_grant():
+    workbook = Workbook(
+        name="Protected",
+        permissions={
+            "owner": "owner@example.com",
+            "shared_with": [{"user": "editor@example.com", "role": "editor"}],
+        },
+    )
+    workflow = SharingWorkflowService(permission_service=PermissionService())
+
+    with pytest.raises(PermissionError, match="Only workbook owners"):
+        workflow.grant_access(
+            workbook,
+            actor_email="editor@example.com",
+            target_email="viewer@example.com",
+            role="viewer",
+        )
+
+
+def test_auth_rejects_email_without_domain_suffix(monkeypatch):
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "unit-test-secret")
+    auth = _build_auth_service()
+
+    with pytest.raises(ValueError, match="valid email"):
+        auth.register_user("user@localhost", "private-pass")
+
+
+def test_auth_factory_uses_persistent_json_repository(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "json")
+    monkeypatch.setenv("AUTH_USER_STORE", str(tmp_path / "identities.json"))
+    monkeypatch.delenv("AUTH_SESSION_SECRET", raising=False)
+
+    auth = create_auth_service()
+    auth.register_user("owner@example.com", "private-pass")
+
+    assert isinstance(auth.repository, JsonUserRepository)
+    assert (tmp_path / "identities.json").is_file()
+
+
+def test_auth_factory_requires_strong_production_secret(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "json")
+    monkeypatch.setenv("AUTH_USER_STORE", str(tmp_path / "identities.json"))
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("AUTH_SESSION_SECRET", "too-short")
+
+    with pytest.raises(ValueError, match="32 characters"):
+        create_auth_service()
+
+
+def test_auth_factory_rejects_unconfigured_identity_provider(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "json")
+    monkeypatch.setenv("AUTH_USER_STORE", str(tmp_path / "identities.json"))
+    monkeypatch.setenv("AUTH_IDENTITY_PROVIDER", "oidc")
+
+    with pytest.raises(ValueError, match="not configured"):
+        create_auth_service()

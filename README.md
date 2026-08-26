@@ -37,6 +37,9 @@ AI_Spreadsheet/
   - sheet tabs with add/rename/duplicate/delete actions
   - status bar with cell position and edit mode indicators
   - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
+  - email/password sign-in and account creation
+  - owner-only workbook sharing and ownership transfer
+  - access-aware owner, editor, and read-only viewer modes
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
 - PostgreSQL storage adapter using the normalized, permission-aware schema in `db/schema.sql`.
@@ -166,6 +169,8 @@ Authentication is now scaffolded as reusable services in `app/auth/service.py` w
 - signed session tokens (`SessionTokenManager`)
 - identity-provider abstraction (`IdentityProvider`) and repository abstraction (`UserRepository`) so external identity providers or database-backed auth can be integrated later without changing UI code
 - optional PostgreSQL-backed user repository (`PostgresUserRepository`) for persistent email/password accounts
+- persistent local hashed-account repository (`JsonUserRepository`) for the default JSON mode
+- desktop sign-in/registration dialog and signed-in identity status
 
 Environment variables for auth are configured via `.env`:
 
@@ -174,6 +179,9 @@ Environment variables for auth are configured via `.env`:
 - `AUTH_SESSION_TTL_SECONDS`
 - `AUTH_PASSWORD_ITERATIONS`
 - `AUTH_PASSWORD_PEPPER` (optional)
+- `AUTH_USER_STORE` (local hashed identity file; defaults to `data/users.json`)
+
+New and imported workbooks assign the signed-in user as owner. Owners can grant viewer/editor access, revoke access, or transfer ownership from the **Access** menu. Viewers get a read-only grid; editors may save content but cannot rewrite permissions. See [`docs/authentication.md`](docs/authentication.md) for the complete flow and deployment boundary.
 
 Workbook sharing and role checks are handled separately in `app/permissions/service.py` via `PermissionService`:
 

@@ -9,12 +9,14 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDia
     QTabWidget, QTableView, QToolBar, QVBoxLayout, QWidget)
 
 from app.core.coordinates import CellAddress
+from app.auth.service import SessionPrincipal
 from app.engine.formula_engine import FormulaEngine
 from app.engine.calculation_service import WorkbookCalculationService
 from app.engine.plugin_loader import PluginLoader
 from app.formulas.registry import register_builtin_functions
 from app.models.sheet import Worksheet
 from app.models.workbook import Workbook
+from app.permissions.service import PermissionService
 from app.services.file_conversion import WorkbookConversionError, WorkbookFileConverter
 from app.services.data_connectors import DataConnectorError, DataConnectorService, DataSourceSpec
 from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
@@ -24,18 +26,21 @@ from app.storage.postgres_storage import PostgresStorageError, PostgresWorkbookS
 from app.ui.spreadsheet_model import SpreadsheetTableModel
 from app.ui.theme import CONTEXT_STUDIO_QSS
 from app.ui.transformation_dialog import TransformationDialog
+from app.ui.sharing_dialog import SharingDialog
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, principal: SessionPrincipal | None = None) -> None:
         super().__init__()
+        self.principal = principal
+        self.permission_service = PermissionService()
         self.resize(1400, 860); self.setStyleSheet(CONTEXT_STUDIO_QSS)
         self.storage, self.converter = get_workbook_storage(), WorkbookFileConverter()
         self.connectors = DataConnectorService()
         self.engine = FormulaEngine(); register_builtin_functions(self.engine); PluginLoader().load(self.engine)
-        self.workbook = Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1")
+        self.workbook = self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1")
         self.calculation = WorkbookCalculationService(self.workbook, self.engine)
-        self.current_file_path: str | None = None; self.dirty = False
+        self.current_file_path: str | None = None; self.dirty = False; self.access_role = "owner"
         self._actions(); self._chrome(); self._tabs(); self._title()
 
     def _make_action(self, label, shortcut, callback):
@@ -61,12 +66,15 @@ class MainWindow(QMainWindow):
         self.connect_csv_a=self._make_action("Connect CSV",None,self._connect_csv)
         self.connect_sqlite_a=self._make_action("Connect SQLite",None,self._connect_sqlite)
         self.refresh_data_a=self._make_action("Refresh Data","Ctrl+Alt+R",self._refresh_data)
+        self.share_a=self._make_action("Share Workbook",None,self._share_workbook)
+        self.sign_out_a=self._make_action("Sign Out",None,self.close)
 
     def _chrome(self):
-        file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a,self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out])
+        file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a,self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out]); file_menu.addSeparator(); file_menu.addAction(self.sign_out_a)
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.copy_a,self.paste_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
         data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
+        access_menu=self.menuBar().addMenu("Access"); access_menu.addAction(self.share_a)
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         bar.addActions([self.new_a,self.open_a,self.save_a]); bar.addSeparator(); bar.addActions([self.copy_a,self.paste_a]); bar.addSeparator(); bar.addAction(self.add_a); self.addToolBar(bar)
         root=QWidget(); layout=QVBoxLayout(root); layout.setContentsMargins(10,10,10,8)
@@ -75,10 +83,10 @@ class MainWindow(QMainWindow):
         formula.addWidget(self.name_box); formula.addWidget(QLabel("fx")); formula.addWidget(self.formula_bar); layout.addLayout(formula)
         self.tabs=QTabWidget(); self.tabs.setDocumentMode(True); self.tabs.setMovable(True); self.tabs.currentChanged.connect(self._tab_changed)
         plus=QPushButton("+"); plus.clicked.connect(self._add_sheet); self.tabs.setCornerWidget(plus); layout.addWidget(self.tabs); self.setCentralWidget(root)
-        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
+        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
 
     def _view(self, index):
-        view=QTableView(); model=SpreadsheetTableModel(self.workbook.sheets[index], evaluator=self._evaluate); view.setModel(model)
+        view=QTableView(); model=SpreadsheetTableModel(self.workbook.sheets[index], evaluator=self._evaluate, editable=self._can_edit()); view.setModel(model)
         view.setAlternatingRowColors(True); view.setSelectionMode(QTableView.SelectionMode.ContiguousSelection); view.horizontalHeader().setDefaultSectionSize(105); view.verticalHeader().setDefaultSectionSize(23)
         view.selectionModel().currentChanged.connect(self._selected); view.selectionModel().selectionChanged.connect(self._selection); model.cell_edited.connect(self._edited); return view
 
@@ -86,6 +94,7 @@ class MainWindow(QMainWindow):
         self.tabs.blockSignals(True); self.tabs.clear()
         for i,sheet in enumerate(self.workbook.sheets): self.tabs.addTab(self._view(i),sheet.name)
         self.tabs.setCurrentIndex(self.workbook.active_sheet_index); self.tabs.blockSignals(False)
+        self._update_access_ui()
 
     def _evaluate(self, sheet, _address, formula):
         return self.calculation.evaluate_formula(sheet.name, formula)
@@ -124,7 +133,7 @@ class MainWindow(QMainWindow):
             index=view.model().index(address.row,address.column); view.setCurrentIndex(index); view.scrollTo(index)
 
     def _new(self):
-        self.workbook=Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1"); self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
+        self.workbook=self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1"); self.access_role="owner"; self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
 
     def _open(self):
         if isinstance(self.storage,PostgresWorkbookStorage):
@@ -132,17 +141,29 @@ class MainWindow(QMainWindow):
             if not ok:path=""
         else:path,_=QFileDialog.getOpenFileName(self,"Open workbook","","AI Workbook (*.json)")
         if not path:return
-        try:self.workbook=self.storage.load_workbook(path)
+        try:
+            if isinstance(self.storage,PostgresWorkbookStorage) and self.principal:
+                workbook=self.storage.load_workbook_for_user(path,self.principal.email)
+            else:workbook=self.storage.load_workbook(path)
         except (OSError,PostgresStorageError) as exc: QMessageBox.warning(self,"Open failed",str(exc)); return
-        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=False; self._tabs(); self._title()
+        role,claimed=self.permission_service.resolve_or_claim(self.principal.email,workbook) if self.principal else ("owner",False)
+        if role is None:QMessageBox.warning(self,"Access denied","You do not have access to this workbook."); return
+        self.workbook=workbook; self.access_role=role
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=claimed; self._tabs(); self._title()
+        if claimed:self.statusBar().showMessage("This legacy workbook is now assigned to you; save it to persist ownership.",5000)
 
     def _save(self):
+        if not self._can_edit():QMessageBox.warning(self,"Read only","Viewers cannot save changes to this workbook."); return
         if not self.current_file_path:self._save_as(); return
-        try:self.storage.save_workbook(self.current_file_path,self.workbook)
+        try:
+            if isinstance(self.storage,PostgresWorkbookStorage) and self.principal:
+                self.storage.save_workbook_for_user(self.current_file_path,self.workbook,self.principal.email)
+            else:self.storage.save_workbook(self.current_file_path,self.workbook)
         except (OSError,PostgresStorageError) as exc:QMessageBox.warning(self,"Save failed",str(exc)); return
         self.dirty=False; self._title()
 
     def _save_as(self):
+        if not self._can_edit():return
         if isinstance(self.storage,PostgresWorkbookStorage):
             path,ok=QInputDialog.getText(self,"Save PostgreSQL workbook","Workbook key:",text=self.current_file_path or "")
             if not ok:path=""
@@ -156,7 +177,8 @@ class MainWindow(QMainWindow):
         if not path:return
         try:self.workbook=(self.converter.import_xlsx(path) if kind=="xlsx" else self.converter.import_csv(path))
         except WorkbookConversionError as exc: QMessageBox.warning(self,"Import failed",str(exc)); return
-        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=None; self.dirty=True; self._tabs(); self._title()
+        if self.principal:self.workbook.permissions=self.permission_service.assign_owner(self.workbook.permissions,self.principal.email)
+        self.access_role="owner"; self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=None; self.dirty=True; self._tabs(); self._title()
 
     def _export(self,kind):
         suffix=".xlsx" if kind=="xlsx" else ".csv"; pattern="Excel Workbook (*.xlsx)" if kind=="xlsx" else "CSV File (*.csv)"; path,_=QFileDialog.getSaveFileName(self,"Export","",pattern)
@@ -248,3 +270,35 @@ class MainWindow(QMainWindow):
             label=(f"PostgreSQL · {self.current_file_path}" if isinstance(self.storage,PostgresWorkbookStorage) else Path(self.current_file_path).name)
         else:label=self.workbook.name
         self.setWindowTitle(f"{'*' if self.dirty else ''}AI Spreadsheet — {label}")
+
+    def _owned_workbook(self,name):
+        if self.principal:return self.permission_service.create_workbook_with_owner(name,self.principal.email)
+        return Workbook(name=name)
+
+    def _resolve_access(self,workbook):
+        if not self.principal:return "owner"
+        role,_claimed=self.permission_service.resolve_or_claim(self.principal.email,workbook)
+        return role
+
+    def _can_edit(self):return self.access_role in {"owner","editor"}
+
+    def _identity_label(self):
+        email=self.principal.email if self.principal else "Local session"
+        return f"{email} · {getattr(self,'access_role','owner')}"
+
+    def _update_access_ui(self):
+        editable=self._can_edit()
+        for action in [self.save_a,self.saveas_a,self.add_a,self.rename_a,self.delete_a,self.paste_a,self.transform_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]:action.setEnabled(editable)
+        self.share_a.setEnabled(self.access_role=="owner")
+        self.formula_bar.setReadOnly(not editable)
+        corner=self.tabs.cornerWidget()
+        if corner:corner.setEnabled(editable)
+        if hasattr(self,"identity_status"):self.identity_status.setText(self._identity_label())
+
+    def _share_workbook(self):
+        if not self.principal or self.access_role!="owner":return
+        dialog=SharingDialog(self.workbook,self.principal.email,self.permission_service,self)
+        dialog.exec()
+        if dialog.changed:
+            self.access_role=self._resolve_access(self.workbook) or "viewer"
+            self._mark_dirty(); self._tabs()
