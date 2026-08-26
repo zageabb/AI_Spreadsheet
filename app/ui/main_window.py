@@ -19,7 +19,8 @@ from app.services.file_conversion import WorkbookConversionError, WorkbookFileCo
 from app.services.data_connectors import DataConnectorError, DataConnectorService, DataSourceSpec
 from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
     worksheet_to_rows)
-from app.storage.json_storage import JsonWorkbookStorage
+from app.storage import get_workbook_storage
+from app.storage.postgres_storage import PostgresStorageError, PostgresWorkbookStorage
 from app.ui.spreadsheet_model import SpreadsheetTableModel
 from app.ui.theme import CONTEXT_STUDIO_QSS
 from app.ui.transformation_dialog import TransformationDialog
@@ -29,7 +30,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.resize(1400, 860); self.setStyleSheet(CONTEXT_STUDIO_QSS)
-        self.storage, self.converter = JsonWorkbookStorage(), WorkbookFileConverter()
+        self.storage, self.converter = get_workbook_storage(), WorkbookFileConverter()
         self.connectors = DataConnectorService()
         self.engine = FormulaEngine(); register_builtin_functions(self.engine); PluginLoader().load(self.engine)
         self.workbook = Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1")
@@ -126,19 +127,29 @@ class MainWindow(QMainWindow):
         self.workbook=Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1"); self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
 
     def _open(self):
-        path,_=QFileDialog.getOpenFileName(self,"Open workbook","","AI Workbook (*.json)")
+        if isinstance(self.storage,PostgresWorkbookStorage):
+            path,ok=QInputDialog.getText(self,"Open PostgreSQL workbook","Workbook key:")
+            if not ok:path=""
+        else:path,_=QFileDialog.getOpenFileName(self,"Open workbook","","AI Workbook (*.json)")
         if not path:return
         try:self.workbook=self.storage.load_workbook(path)
-        except OSError as exc: QMessageBox.warning(self,"Open failed",str(exc)); return
+        except (OSError,PostgresStorageError) as exc: QMessageBox.warning(self,"Open failed",str(exc)); return
         self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=False; self._tabs(); self._title()
 
     def _save(self):
         if not self.current_file_path:self._save_as(); return
-        self.storage.save_workbook(self.current_file_path,self.workbook); self.dirty=False; self._title()
+        try:self.storage.save_workbook(self.current_file_path,self.workbook)
+        except (OSError,PostgresStorageError) as exc:QMessageBox.warning(self,"Save failed",str(exc)); return
+        self.dirty=False; self._title()
 
     def _save_as(self):
-        path,_=QFileDialog.getSaveFileName(self,"Save workbook","","AI Workbook (*.json)")
-        if path:self.current_file_path=path if path.endswith(".json") else path+".json"; self._save()
+        if isinstance(self.storage,PostgresWorkbookStorage):
+            path,ok=QInputDialog.getText(self,"Save PostgreSQL workbook","Workbook key:",text=self.current_file_path or "")
+            if not ok:path=""
+            if path:self.current_file_path=path.strip(); self._save()
+        else:
+            path,_=QFileDialog.getSaveFileName(self,"Save workbook","","AI Workbook (*.json)")
+            if path:self.current_file_path=path if path.endswith(".json") else path+".json"; self._save()
 
     def _import(self,kind):
         pattern="Excel Workbook (*.xlsx)" if kind=="xlsx" else "CSV File (*.csv)"; path,_=QFileDialog.getOpenFileName(self,"Import","",pattern)
@@ -233,4 +244,7 @@ class MainWindow(QMainWindow):
         return f"{base} ({n})"
 
     def _title(self):
-        label=Path(self.current_file_path).name if self.current_file_path else self.workbook.name; self.setWindowTitle(f"{'*' if self.dirty else ''}AI Spreadsheet — {label}")
+        if self.current_file_path:
+            label=(f"PostgreSQL · {self.current_file_path}" if isinstance(self.storage,PostgresWorkbookStorage) else Path(self.current_file_path).name)
+        else:label=self.workbook.name
+        self.setWindowTitle(f"{'*' if self.dirty else ''}AI Spreadsheet — {label}")

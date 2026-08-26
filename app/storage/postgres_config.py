@@ -28,6 +28,8 @@ class PostgresConfig:
     user: str = "spreadsheet_user"
     password: str = ""
     sslmode: str = "prefer"
+    connect_timeout: int = 10
+    application_name: str = "ai_spreadsheet"
 
     @classmethod
     def from_env(cls) -> "PostgresConfig":
@@ -51,8 +53,19 @@ class PostgresConfig:
             port = int(os.getenv("POSTGRES_PORT", "5432"))
         except ValueError as exc:
             raise ValueError("POSTGRES_PORT must be an integer.") from exc
-        if port <= 0:
-            raise ValueError("POSTGRES_PORT must be a positive integer.")
+        if port <= 0 or port > 65535:
+            raise ValueError("POSTGRES_PORT must be between 1 and 65535.")
+
+        try:
+            connect_timeout = int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "10"))
+        except ValueError as exc:
+            raise ValueError("POSTGRES_CONNECT_TIMEOUT must be an integer.") from exc
+        if connect_timeout <= 0:
+            raise ValueError("POSTGRES_CONNECT_TIMEOUT must be a positive integer.")
+
+        application_name = os.getenv("POSTGRES_APPLICATION_NAME", "ai_spreadsheet").strip()
+        if not application_name:
+            application_name = "ai_spreadsheet"
 
         sslmode = os.getenv("POSTGRES_SSLMODE", "prefer").strip().lower() or "prefer"
         if sslmode not in _ALLOWED_SSLMODES:
@@ -65,6 +78,8 @@ class PostgresConfig:
             user=user,
             password=password,
             sslmode=sslmode,
+            connect_timeout=connect_timeout,
+            application_name=application_name,
         )
 
     def connection_kwargs(self) -> dict[str, str | int]:
@@ -76,4 +91,6 @@ class PostgresConfig:
             "user": self.user,
             "password": self.password,
             "sslmode": self.sslmode,
+            "connect_timeout": self.connect_timeout,
+            "application_name": self.application_name,
         }

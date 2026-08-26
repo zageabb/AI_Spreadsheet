@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS workbooks (
   external_key TEXT UNIQUE NOT NULL,
   name TEXT NOT NULL,
   owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  active_sheet_index INTEGER NOT NULL DEFAULT 0,
+  active_sheet_index INTEGER NOT NULL DEFAULT 0 CHECK (active_sheet_index >= 0),
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS cells (
   formula TEXT,
   formatting JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (sheet_id, address)
+  PRIMARY KEY (sheet_id, address),
+  CONSTRAINT cells_address_check CHECK (address ~ '^[A-Z]+[1-9][0-9]*$')
 );
 
 CREATE TABLE IF NOT EXISTS workbook_permissions (
@@ -72,6 +73,8 @@ CREATE INDEX IF NOT EXISTS idx_sheets_workbook_id ON sheets(workbook_id);
 CREATE INDEX IF NOT EXISTS idx_cells_sheet_id ON cells(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_permissions_workbook_role ON workbook_permissions(workbook_id, role);
 CREATE INDEX IF NOT EXISTS idx_sessions_workbook_active ON workbook_sessions(workbook_id, is_active);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_permissions_single_owner
+  ON workbook_permissions(workbook_id) WHERE role = 'owner';
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN

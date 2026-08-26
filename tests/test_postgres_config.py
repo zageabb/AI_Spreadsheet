@@ -46,3 +46,21 @@ def test_get_workbook_storage_postgres_selection_imports_adapter(monkeypatch):
     monkeypatch.setenv("STORAGE_BACKEND", "postgres")
     storage = get_workbook_storage()
     assert storage.__class__.__name__ == "PostgresWorkbookStorage"
+
+
+def test_postgres_config_rejects_out_of_range_port(monkeypatch):
+    monkeypatch.setenv("POSTGRES_PORT", "70000")
+    with pytest.raises(ValueError, match="between 1 and 65535"):
+        PostgresConfig.from_env()
+
+
+def test_postgres_config_rejects_invalid_connect_timeout(monkeypatch):
+    monkeypatch.setenv("POSTGRES_CONNECT_TIMEOUT", "0")
+    with pytest.raises(ValueError, match="positive integer"):
+        PostgresConfig.from_env()
+
+
+def test_get_workbook_storage_rejects_unknown_backend(monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "postgress")
+    with pytest.raises(ValueError, match="json.*postgres"):
+        get_workbook_storage()

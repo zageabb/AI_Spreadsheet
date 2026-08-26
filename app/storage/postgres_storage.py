@@ -21,8 +21,36 @@ class PostgresStorageError(RuntimeError):
 class PostgresWorkbookStorage:
     """PostgreSQL-backed workbook persistence adapter."""
 
-    def __init__(self, config: PostgresConfig | None = None) -> None:
-        self.db = PostgresDatabase(config=config)
+    def __init__(
+        self,
+        config: PostgresConfig | None = None,
+        database: PostgresDatabase | None = None,
+    ) -> None:
+        self.db = database or PostgresDatabase(config=config)
+
+    def list_workbooks(self, user_email: str | None = None) -> list[dict[str, Any]]:
+        """List workbook references, optionally restricted to a user's access."""
+        query = """
+            SELECT DISTINCT w.external_key, w.name, w.updated_at
+            FROM workbooks w
+        """
+        params: tuple[Any, ...] = ()
+        if user_email:
+            query += """
+                JOIN workbook_permissions wp ON wp.workbook_id = w.id
+                JOIN users u ON u.id = wp.user_id
+                WHERE lower(u.email) = lower(%s)
+            """
+            params = (user_email.strip(),)
+        query += " ORDER BY w.updated_at DESC, w.name ASC"
+        with self.db.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                return list(cur.fetchall())
+
+    def load_workbook_for_user(self, path: str, user_email: str) -> Workbook:
+        """Load only when the user has owner, editor, or viewer access."""
+        return self._load_workbook(path=path, user_email=user_email)
 
     def load_workbook(self, path: str) -> Workbook:
         """Load a workbook identified by `path` as external key.
@@ -31,19 +59,35 @@ class PostgresWorkbookStorage:
         PostgreSQL storage (for example: `workbook://sales-q1` or `sales_q1`).
         """
 
+        return self._load_workbook(path=path, user_email=None)
+
+    def _load_workbook(self, path: str, user_email: str | None) -> Workbook:
         with self.db.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
+                permission_clause = ""
+                params: tuple[Any, ...] = (path,)
+                if user_email:
+                    permission_clause = """
+                        AND EXISTS (
+                            SELECT 1 FROM workbook_permissions wp
+                            JOIN users u ON u.id = wp.user_id
+                            WHERE wp.workbook_id = workbooks.id
+                              AND lower(u.email) = lower(%s)
+                        )
                     """
+                    params = (path, user_email.strip())
+                cur.execute(
+                    f"""
                     SELECT id, name, active_sheet_index, metadata
                     FROM workbooks
                     WHERE external_key = %s
+                    {permission_clause}
                     """,
-                    (path,),
+                    params,
                 )
                 workbook_row = cur.fetchone()
                 if workbook_row is None:
-                    raise PostgresStorageError(f"Workbook not found in PostgreSQL: {path}")
+                    raise PostgresStorageError(f"Workbook not found or access denied: {path}")
 
                 cur.execute(
                     """
@@ -87,7 +131,7 @@ class PostgresWorkbookStorage:
                     sheets.append(
                         {
                             "name": sheet_row["name"],
-                            "metadata": sheet_row["metadata"] if isinstance(sheet_row["metadata"], dict) else {},
+                            "metadata": _json_object(sheet_row["metadata"]),
                             "cells": cells,
                         }
                     )
@@ -97,7 +141,7 @@ class PostgresWorkbookStorage:
         payload: dict[str, Any] = {
             "name": workbook_row["name"],
             "active_sheet_index": workbook_row["active_sheet_index"] or 0,
-            "metadata": workbook_row["metadata"] if isinstance(workbook_row["metadata"], dict) else {},
+            "metadata": _json_object(workbook_row["metadata"]),
             "permissions": permissions,
             "sheets": sheets,
         }
@@ -106,10 +150,33 @@ class PostgresWorkbookStorage:
     def save_workbook(self, path: str, workbook: Workbook) -> None:
         """Save workbook content to PostgreSQL using upsert semantics."""
 
+        self._save_workbook(path=path, workbook=workbook, actor_email=None)
+
+    def save_workbook_for_user(self, path: str, workbook: Workbook, user_email: str) -> None:
+        """Save an existing workbook only when the user has edit permission.
+
+        A new workbook may be created only when its model names the actor as owner.
+        """
+        self._save_workbook(path=path, workbook=workbook, actor_email=user_email)
+
+    def _save_workbook(
+        self,
+        path: str,
+        workbook: Workbook,
+        actor_email: str | None,
+    ) -> None:
+        if not path.strip():
+            raise PostgresStorageError("PostgreSQL workbook key cannot be empty.")
+
         payload = workbook.to_dict()
 
-        with self.db.connection() as conn:
+        with self.db.transaction() as conn:
             with conn.cursor() as cur:
+                actor_role: str | None = None
+                if actor_email:
+                    actor_role = self._authorize_save(
+                        cur, path, actor_email, payload.get("permissions", {})
+                    )
                 cur.execute(
                     """
                     INSERT INTO workbooks (external_key, name, active_sheet_index, metadata)
@@ -164,9 +231,70 @@ class PostgresWorkbookStorage:
                             ),
                         )
 
-                self._sync_permissions(cur, workbook_id, payload.get("permissions", {}))
+                # Editors may update workbook content but cannot escalate roles by
+                # modifying the permissions embedded in a client payload.
+                if actor_role != "editor":
+                    self._sync_permissions(cur, workbook_id, payload.get("permissions", {}))
+                    owner = payload.get("permissions", {}).get("owner")
+                    owner_id = (
+                        self._ensure_user(cur, owner)
+                        if isinstance(owner, str) and owner.strip()
+                        else None
+                    )
+                    cur.execute(
+                        "UPDATE workbooks SET owner_user_id = %s WHERE id = %s",
+                        (owner_id, workbook_id),
+                    )
 
-            conn.commit()
+    def delete_workbook(self, path: str, actor_email: str) -> None:
+        """Delete a workbook only when the actor is its owner."""
+        with self.db.transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM workbooks w
+                    WHERE w.external_key = %s
+                      AND EXISTS (
+                        SELECT 1 FROM workbook_permissions wp
+                        JOIN users u ON u.id = wp.user_id
+                        WHERE wp.workbook_id = w.id
+                          AND lower(u.email) = lower(%s)
+                          AND wp.role = 'owner'
+                      )
+                    RETURNING w.id
+                    """,
+                    (path, actor_email.strip()),
+                )
+                if cur.fetchone() is None:
+                    raise PostgresStorageError("Workbook not found or owner access required.")
+
+    def _authorize_save(
+        self,
+        cur: Any,
+        path: str,
+        actor_email: str,
+        permissions: dict[str, Any],
+    ) -> str:
+        cur.execute("SELECT id FROM workbooks WHERE external_key = %s", (path,))
+        existing = cur.fetchone()
+        if existing is None:
+            owner = permissions.get("owner")
+            if not isinstance(owner, str) or owner.strip().casefold() != actor_email.strip().casefold():
+                raise PostgresStorageError("New PostgreSQL workbooks must assign the actor as owner.")
+            return "owner"
+        cur.execute(
+            """
+            SELECT wp.role
+            FROM workbook_permissions wp
+            JOIN users u ON u.id = wp.user_id
+            WHERE wp.workbook_id = %s AND lower(u.email) = lower(%s)
+            """,
+            (existing["id"], actor_email.strip()),
+        )
+        access = cur.fetchone()
+        if access is None or access["role"] not in {"owner", "editor"}:
+            raise PostgresStorageError("Editor or owner access is required to save this workbook.")
+        return access["role"]
 
     def _load_permissions(self, cur: Any, workbook_id: str) -> dict[str, Any]:
         cur.execute(
@@ -226,6 +354,7 @@ class PostgresWorkbookStorage:
             )
 
     def _ensure_user(self, cur: Any, email: str) -> str:
+        email = email.strip().casefold()
         cur.execute(
             """
             INSERT INTO users (email)
@@ -237,3 +366,13 @@ class PostgresWorkbookStorage:
             (email,),
         )
         return cur.fetchone()["id"]
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    """Normalize JSONB values from both real and lightweight test drivers."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return value if isinstance(value, dict) else {}

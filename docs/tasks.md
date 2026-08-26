@@ -82,11 +82,11 @@
 - [ ] Grant/revoke access workflows
 
 ## Milestone 6 — PostgreSQL backend
-- [ ] Schema SQL
-- [ ] Python DB layer
-- [ ] Storage adapter
-- [ ] Config examples
-- [ ] JSON-to-PostgreSQL migration notes/script
+- [x] Schema SQL
+- [x] Python DB layer
+- [x] Storage adapter
+- [x] Config examples
+- [x] JSON-to-PostgreSQL migration notes/script
 
 ## Milestone 7 — Collaboration server
 - [ ] FastAPI server

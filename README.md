@@ -39,7 +39,7 @@ AI_Spreadsheet/
   - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
 - Workbook, worksheet, and cell data models.
 - Local JSON storage adapter (load/save).
-- PostgreSQL storage adapter using normalized schema in `db/schema.sql`.
+- PostgreSQL storage adapter using the normalized, permission-aware schema in `db/schema.sql`.
 - JSON workbook schema documentation in `docs/workbook_json_structure.md`.
 - Excel/CSV conversion service for practical workbook interchange:
   - import `.xlsx` with multi-sheet support
@@ -97,6 +97,7 @@ Storage adapters are selected via `STORAGE_BACKEND`:
 - `postgres` (alternative backend)
 
 Use `app.storage.get_workbook_storage()` to resolve the adapter from env-based configuration.
+Unknown backend names fail fast instead of silently falling back to local storage.
 
 ```bash
 # default local-first mode
@@ -124,10 +125,13 @@ Required PostgreSQL env vars (no hardcoded credentials in code):
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 - `POSTGRES_SSLMODE`
+- `POSTGRES_CONNECT_TIMEOUT`
+- `POSTGRES_APPLICATION_NAME`
 
 ### 2) Initialize schema
 
 ```bash
+python -m db.init_postgres --check
 python -m db.init_postgres
 ```
 
@@ -143,10 +147,14 @@ This applies `db/schema.sql`, which includes tables for:
 ### 3) Migrate existing JSON files (optional)
 
 ```bash
-python -m db.json_to_postgres
+python -m db.json_to_postgres --source-dir data --dry-run
+python -m db.json_to_postgres --source-dir data
 ```
 
 By default this migrates `data/*.json` and stores each workbook in PostgreSQL using the JSON filename stem as the workbook `external_key`.
+Use `--key-prefix` to namespace imported keys and `--continue-on-error` for a complete migration report.
+
+When PostgreSQL is selected, desktop Open and Save prompt for the workbook's stable external key. Excel and CSV import/export continue to use normal files. Service and server integrations can use the adapter's permission-aware load, save, list, and delete methods. See [`docs/postgresql.md`](docs/postgresql.md) for migration, authorization, and production guidance.
 
 
 ## Authentication and sharing model

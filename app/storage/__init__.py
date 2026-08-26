@@ -21,7 +21,9 @@ def get_workbook_storage() -> WorkbookStorage:
         from app.storage.postgres_storage import PostgresWorkbookStorage
 
         return PostgresWorkbookStorage()
-    return JsonWorkbookStorage()
+    if backend == "json":
+        return JsonWorkbookStorage()
+    raise ValueError("STORAGE_BACKEND must be either 'json' or 'postgres'.")
 
 
 __all__ = [
