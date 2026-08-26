@@ -89,13 +89,13 @@
 - [x] JSON-to-PostgreSQL migration notes/script
 
 ## Milestone 7 — Collaboration server
-- [ ] FastAPI server
-- [ ] WebSocket support
-- [ ] Presence tracking
-- [ ] Workbook session tracking
-- [ ] Current sheet visibility
-- [ ] Current cell/range visibility
-- [ ] Basic conflict-handling scaffold
+- [x] FastAPI server
+- [x] WebSocket support
+- [x] Presence tracking
+- [x] Workbook session tracking
+- [x] Current sheet visibility
+- [x] Current cell/range visibility
+- [x] Basic conflict-handling scaffold
 
 ## Milestone 8 — Email notifications and hardening
 - [ ] Invite/access emails

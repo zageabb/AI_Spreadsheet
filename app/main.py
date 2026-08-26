@@ -26,7 +26,7 @@ def main() -> int:
     login = LoginDialog(auth_service)
     if not login.exec() or login.session is None:
         return 0
-    window = MainWindow(principal=login.session.principal)
+    window = MainWindow(principal=login.session.principal, session_token=login.session.token)
     window.show()
     return app.exec()
 

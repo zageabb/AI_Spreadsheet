@@ -2,7 +2,7 @@
 
 AI Spreadsheet is a **desktop-first Python spreadsheet application scaffold** built with **PySide6** and modular architecture.
 
-> ⚠️ **Scaffold status:** This repository currently provides a production-minded MVP skeleton and placeholders for some advanced features (auth flows, collaboration server, email notifications), while JSON and PostgreSQL workbook storage backends are now both available behind a shared storage abstraction.
+> ⚠️ **Development status:** The desktop spreadsheet, authentication, permissions and controlled live collaboration are functional. Email delivery and several advanced Excel features remain staged work.
 
 ## Project tree
 
@@ -261,15 +261,18 @@ Persisting and validating reset tokens is intentionally left for a later stage.
 This keeps authorization logic separate from UI and separate from workbook model/business logic.
 
 
-## Collaboration server (starter, not full co-editing)
+## Controlled live collaboration
 
-The collaboration backend now lives in `server/main.py` + `server/collaboration.py` and provides a realistic starter architecture separated from the desktop UI layer:
+The optional collaboration backend lives in `server/main.py` + `server/collaboration.py`, while transport remains isolated in `app/services/collaboration_client.py`:
 
-- FastAPI REST endpoints for workbook join/leave, presence updates, lock acquire/release, and state snapshot retrieval.
-- WebSocket subscription channel at `/ws/collaboration/workbooks/{workbook_id}` for near real-time participant and advisory-lock events.
-- In-memory workbook session tracking keyed by workbook id.
-- User presence payloads tracking who has a workbook open, current sheet visibility, and active cell/range visibility.
-- Advisory lock scaffold (`sheet + range`) to reduce edit collisions before full merge/conflict resolution is implemented.
+- Bearer-token authentication for every collaboration request and WebSocket.
+- Server-side owner/editor/viewer checks using PostgreSQL or server-visible JSON workbooks.
+- Multiple independent sessions per user, heartbeat expiry, join/leave and reconnect handling.
+- Live presence showing current sheet and active cell/range.
+- Overlap-aware advisory locks; viewers cannot lock or publish edits.
+- Revisioned, idempotent cell events with explicit HTTP 409 conflict responses and catch-up changes.
+- Desktop event application through a Qt signal bridge, with connection and participant status.
+- Automatic local-only fallback when `COLLAB_SERVER_URL` is blank or unavailable.
 
 Current REST endpoints:
 
@@ -278,29 +281,28 @@ Current REST endpoints:
 - `POST /api/collaboration/workbooks/{workbook_id}/join`
 - `POST /api/collaboration/workbooks/{workbook_id}/leave`
 - `POST /api/collaboration/workbooks/{workbook_id}/presence`
+- `POST /api/collaboration/workbooks/{workbook_id}/heartbeat`
 - `POST /api/collaboration/workbooks/{workbook_id}/locks/acquire`
 - `POST /api/collaboration/workbooks/{workbook_id}/locks/release`
-
-Client/server separation:
-
-- Desktop-side collaboration contract scaffold is defined in `app/services/collaboration_client.py` as a protocol + payload dataclasses.
-- The PySide6 UI is not tightly coupled to FastAPI transport details.
+- `POST /api/collaboration/workbooks/{workbook_id}/cells`
 
 ### Collaboration limitations (explicit)
 
 This stage intentionally does **not** claim full Google Sheets-style collaboration. Specifically:
 
-- No OT/CRDT algorithm yet; simultaneous cell edits are not merged automatically.
-- Locks are advisory starter controls, not hard transactional guarantees.
-- Server session state is currently in-memory (restart clears presence/locks).
-- No durable event log or replay stream yet.
-- No websocket auth handshake yet; integrate with auth/session tokens in a later stage.
+- No OT/CRDT algorithm: concurrent edits from stale revisions are rejected and shown as conflicts.
+- Locks are coordination hints, not database transactions.
+- Server presence, locks, revisions and the bounded recent-change buffer are in-memory; restart clears them.
+- Live cell events are not a durable server-side workbook save. A connected owner/editor must save normally.
+- Shared JSON mode requires the workbook to be inside the server's `JSON_DATA_DIR`; PostgreSQL is recommended for multi-machine sharing.
 
 Run the collaboration server locally:
 
 ```bash
 uvicorn server.main:app --reload --port 8000
 ```
+
+Set the same strong `AUTH_SESSION_SECRET` for desktop and server, then set the desktop's `COLLAB_SERVER_URL` (for example `http://127.0.0.1:8000`). Leave it blank for normal local-only use. See [`docs/collaboration.md`](docs/collaboration.md).
 
 ## Formula functions and plugins
 

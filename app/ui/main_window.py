@@ -1,8 +1,9 @@
 """Context Studio-styled desktop shell with a virtual spreadsheet grid."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QStatusBar,
@@ -18,6 +19,8 @@ from app.models.sheet import Worksheet
 from app.models.workbook import Workbook
 from app.permissions.service import PermissionService
 from app.services.file_conversion import WorkbookConversionError, WorkbookFileConverter
+from app.services.collaboration_client import (CollaborationConflict,
+    CollaborationIdentity, PresencePayload, RealtimeCollaborationClient)
 from app.services.data_connectors import DataConnectorError, DataConnectorService, DataSourceSpec
 from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
     worksheet_to_rows)
@@ -29,11 +32,22 @@ from app.ui.transformation_dialog import TransformationDialog
 from app.ui.sharing_dialog import SharingDialog
 
 
+class CollaborationBridge(QObject):
+    event_received = Signal(object)
+
+
 class MainWindow(QMainWindow):
-    def __init__(self, principal: SessionPrincipal | None = None) -> None:
+    def __init__(self, principal: SessionPrincipal | None = None,
+                 session_token: str | None = None) -> None:
         super().__init__()
         self.principal = principal
+        self.session_token = session_token
         self.permission_service = PermissionService()
+        self.collaboration: RealtimeCollaborationClient | None = None
+        self.collaboration_lock: tuple[str, str] | None = None
+        self.collaboration_participants: dict[str, dict] = {}
+        self.collaboration_bridge = CollaborationBridge()
+        self.collaboration_bridge.event_received.connect(self._collaboration_event)
         self.resize(1400, 860); self.setStyleSheet(CONTEXT_STUDIO_QSS)
         self.storage, self.converter = get_workbook_storage(), WorkbookFileConverter()
         self.connectors = DataConnectorService()
@@ -83,7 +97,7 @@ class MainWindow(QMainWindow):
         formula.addWidget(self.name_box); formula.addWidget(QLabel("fx")); formula.addWidget(self.formula_bar); layout.addLayout(formula)
         self.tabs=QTabWidget(); self.tabs.setDocumentMode(True); self.tabs.setMovable(True); self.tabs.currentChanged.connect(self._tab_changed)
         plus=QPushButton("+"); plus.clicked.connect(self._add_sheet); self.tabs.setCornerWidget(plus); layout.addWidget(self.tabs); self.setCentralWidget(root)
-        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
+        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.collaboration_status=QLabel("Collaboration: local"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.collaboration_status); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
 
     def _view(self, index):
         view=QTableView(); model=SpreadsheetTableModel(self.workbook.sheets[index], evaluator=self._evaluate, editable=self._can_edit()); view.setModel(model)
@@ -108,7 +122,13 @@ class MainWindow(QMainWindow):
         value=current.model().data(current,Qt.ItemDataRole.EditRole); self.formula_bar.setText("" if value is None else str(value))
 
     def _selection(self,*_):
-        view=self._current(); self.selection_status.setText(f"Selection: {len(view.selectionModel().selectedIndexes()) if view else 0}")
+        view=self._current(); indexes=view.selectionModel().selectedIndexes() if view else []
+        self.selection_status.setText(f"Selection: {len(indexes)}")
+        if indexes:
+            top,bottom=min(i.row() for i in indexes),max(i.row() for i in indexes)
+            left,right=min(i.column() for i in indexes),max(i.column() for i in indexes)
+            start=CellAddress(top,left).a1(False); end=CellAddress(bottom,right).a1(False)
+            self._publish_presence(start if start==end else f"{start}:{end}")
 
     def _edited(self,address,*_):
         sheet=self.workbook.get_active_sheet()
@@ -117,9 +137,16 @@ class MainWindow(QMainWindow):
             view=self.tabs.widget(index)
             if isinstance(view,QTableView): view.model().refresh()
         self._mark_dirty()
+        if self.collaboration:
+            cell=sheet.cells.get(address)
+            try:self.collaboration.publish_cell_change(sheet.name,address,cell.value if cell else None,cell.formula if cell else None)
+            except CollaborationConflict as exc:self.statusBar().showMessage(f"Collaboration conflict: {exc}. Your local edit was not broadcast.",6000)
+            except (OSError,RuntimeError) as exc:self.statusBar().showMessage(f"Collaboration offline: {exc}",4000)
     def _mark_dirty(self): self.dirty=True; self._title()
     def _tab_changed(self,index):
-        if index>=0:self.workbook.active_sheet_index=index
+        if index>=0:
+            self.workbook.active_sheet_index=index
+            self._publish_presence(None)
 
     def _apply_formula(self):
         view=self._current()
@@ -133,7 +160,7 @@ class MainWindow(QMainWindow):
             index=view.model().index(address.row,address.column); view.setCurrentIndex(index); view.scrollTo(index)
 
     def _new(self):
-        self.workbook=self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1"); self.access_role="owner"; self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
+        self._stop_collaboration(); self.workbook=self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1"); self.access_role="owner"; self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
 
     def _open(self):
         if isinstance(self.storage,PostgresWorkbookStorage):
@@ -151,6 +178,7 @@ class MainWindow(QMainWindow):
         self.workbook=workbook; self.access_role=role
         self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=claimed; self._tabs(); self._title()
         if claimed:self.statusBar().showMessage("This legacy workbook is now assigned to you; save it to persist ownership.",5000)
+        self._start_collaboration()
 
     def _save(self):
         if not self._can_edit():QMessageBox.warning(self,"Read only","Viewers cannot save changes to this workbook."); return
@@ -161,6 +189,7 @@ class MainWindow(QMainWindow):
             else:self.storage.save_workbook(self.current_file_path,self.workbook)
         except (OSError,PostgresStorageError) as exc:QMessageBox.warning(self,"Save failed",str(exc)); return
         self.dirty=False; self._title()
+        self._start_collaboration()
 
     def _save_as(self):
         if not self._can_edit():return
@@ -302,3 +331,83 @@ class MainWindow(QMainWindow):
         if dialog.changed:
             self.access_role=self._resolve_access(self.workbook) or "viewer"
             self._mark_dirty(); self._tabs()
+
+    def _collaboration_key(self):
+        if not self.current_file_path:return None
+        return self.current_file_path if isinstance(self.storage,PostgresWorkbookStorage) else Path(self.current_file_path).stem
+
+    def _start_collaboration(self):
+        server_url=os.getenv("COLLAB_SERVER_URL","").strip(); key=self._collaboration_key()
+        if not server_url or not key or not self.principal or not self.session_token:
+            self.collaboration_status.setText("Collaboration: local")
+            return
+        if self.collaboration and self.collaboration.workbook_id==key:return
+        self._stop_collaboration()
+        client=RealtimeCollaborationClient(server_url,self.session_token,self.collaboration_bridge.event_received.emit)
+        presence=PresencePayload(self.workbook.get_active_sheet().name,None)
+        try:client.start(key,CollaborationIdentity(self.principal.user_id,self.principal.email),presence)
+        except (OSError,RuntimeError) as exc:
+            client.stop(); self.collaboration_status.setText("Collaboration: offline")
+            self.statusBar().showMessage(f"Collaboration unavailable; continuing locally: {exc}",5000); return
+        self.collaboration=client; self.collaboration_status.setText("Collaboration: connecting")
+
+    def _stop_collaboration(self):
+        client=self.collaboration; self.collaboration=None; self.collaboration_lock=None
+        self.collaboration_participants={}
+        if client:client.stop()
+        if hasattr(self,"collaboration_status"):self.collaboration_status.setText("Collaboration: local")
+
+    def _publish_presence(self,address):
+        if not self.collaboration:return
+        sheet=self.workbook.get_active_sheet().name
+        if self.collaboration_lock:
+            old_sheet,old_range=self.collaboration_lock
+            if (old_sheet,old_range)!=(sheet,address):self.collaboration.release_advisory_lock(old_sheet,old_range); self.collaboration_lock=None
+        try:
+            self.collaboration.update_presence(PresencePayload(sheet,address))
+            if address and self._can_edit() and self.collaboration.acquire_advisory_lock(sheet,address):self.collaboration_lock=(sheet,address)
+        except (OSError,RuntimeError):pass
+
+    def _collaboration_event(self,event):
+        event_type=event.get("event") if isinstance(event,dict) else None
+        if event_type=="connected":
+            state=event.get("state",{}); self.collaboration_participants={p["session_id"]:p for p in state.get("participants",[])}
+            for change in state.get("recent_changes",[]):self._apply_remote_change(change)
+        elif event_type in {"presence.joined","presence.updated"}:
+            presence=event.get("presence",{}); self.collaboration_participants[presence.get("session_id","")]=presence
+            if self.collaboration and presence.get("session_id")!=self.collaboration.session_id:
+                focus=presence.get("active_range") or presence.get("current_sheet") or "workbook"
+                self.statusBar().showMessage(f"{presence.get('display_name','Another user')} is viewing {focus}",1800)
+        elif event_type=="presence.left":
+            self.collaboration_participants.pop(event.get("presence",{}).get("session_id"),None)
+        elif event_type=="cell.updated":self._apply_remote_change(event.get("change",{}))
+        elif event_type=="sync.required":
+            for change in event.get("changes",[]):self._apply_remote_change(change)
+        elif event_type=="lock.acquired":
+            lock=event.get("lock",{})
+            if self.collaboration and lock.get("holder_session_id")!=self.collaboration.session_id:
+                self.statusBar().showMessage(f"{lock.get('holder_display_name','Another user')} is editing {lock.get('sheet_name')}!{lock.get('range_ref')}",2200)
+        elif event_type=="access.revoked":
+            self.collaboration_status.setText("Collaboration: access revoked")
+            self.statusBar().showMessage("Your collaboration access was revoked. The local workbook remains open.",6000)
+            return
+        elif event_type in {"connection.error","connection.closed"}:
+            self.collaboration_status.setText("Collaboration: reconnecting"); return
+        if self.collaboration:self.collaboration_status.setText(f"Collaboration: connected · {len(self.collaboration_participants)} user(s)")
+
+    def _apply_remote_change(self,change):
+        if not self.collaboration or change.get("session_id")==self.collaboration.session_id:return
+        sheet=next((item for item in self.workbook.sheets if item.name==change.get("sheet_name")),None)
+        if sheet is None:return
+        address=str(change.get("address") or "")
+        try:CellAddress.parse(address)
+        except ValueError:return
+        cell=sheet.get_cell(address); cell.formula=change.get("formula"); cell.value=change.get("value")
+        self.calculation.recalculate({self.calculation.cell_key(sheet.name,address)})
+        for index in range(self.tabs.count()):
+            view=self.tabs.widget(index)
+            if isinstance(view,QTableView):view.model().refresh()
+        self._mark_dirty(); self.statusBar().showMessage(f"Live update: {sheet.name}!{address}",1800)
+
+    def closeEvent(self,event):
+        self._stop_collaboration(); super().closeEvent(event)
