@@ -15,7 +15,9 @@
 - [ ] Add lazy error-handling functions, dynamic arrays and structured table references
 - [x] Add a Context Studio-styled transformation step builder with a 200-row preview
 - [x] Persist applied transformation steps in worksheet metadata
-- [ ] Add refreshable database/API connectors and pipeline re-run controls
+- [x] Add refreshable CSV and read-only SQLite connectors
+- [x] Reload connected sources and replay saved transformation pipelines
+- [ ] Add authenticated REST API and PostgreSQL analytical connectors
 - [ ] Preserve charts, validation rules, tables and unsupported XLSX objects
 
 ## Milestone 1 — MVP desktop spreadsheet

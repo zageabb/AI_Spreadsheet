@@ -19,3 +19,9 @@ def test_rows_round_trip_through_worksheet():
     rows_to_worksheet(rows, sheet)
     assert worksheet_to_rows(sheet) == rows
     assert sheet.metadata["transformation_columns"] == ["Supplier", "Cost"]
+
+
+def test_pipeline_can_be_recreated_from_saved_metadata():
+    payload = [{"operation": "filter", "parameters": {"column": "Value", "operator": "gt", "value": 1}}]
+    pipeline = TransformationPipeline.from_dicts(payload)
+    assert pipeline.apply([{"Value": 1}, {"Value": 2}]) == [{"Value": 2}]

@@ -17,12 +17,20 @@ class TransformationStep:
     def to_dict(self) -> dict[str, Any]:
         return {"operation": self.operation, "parameters": self.parameters}
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TransformationStep":
+        return cls(str(payload["operation"]), dict(payload.get("parameters", {})))
+
 
 class TransformationPipeline:
     """Apply reviewable transformation steps to row dictionaries."""
 
     def __init__(self, steps: list[TransformationStep] | None = None) -> None:
         self.steps = steps or []
+
+    @classmethod
+    def from_dicts(cls, payloads: list[dict[str, Any]]) -> "TransformationPipeline":
+        return cls([TransformationStep.from_dict(payload) for payload in payloads])
 
     def apply(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = [dict(row) for row in rows]

@@ -16,7 +16,9 @@ from app.formulas.registry import register_builtin_functions
 from app.models.sheet import Worksheet
 from app.models.workbook import Workbook
 from app.services.file_conversion import WorkbookConversionError, WorkbookFileConverter
-from app.services.transformations import rows_to_worksheet, worksheet_to_rows
+from app.services.data_connectors import DataConnectorError, DataConnectorService, DataSourceSpec
+from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
+    worksheet_to_rows)
 from app.storage.json_storage import JsonWorkbookStorage
 from app.ui.spreadsheet_model import SpreadsheetTableModel
 from app.ui.theme import CONTEXT_STUDIO_QSS
@@ -28,6 +30,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.resize(1400, 860); self.setStyleSheet(CONTEXT_STUDIO_QSS)
         self.storage, self.converter = JsonWorkbookStorage(), WorkbookFileConverter()
+        self.connectors = DataConnectorService()
         self.engine = FormulaEngine(); register_builtin_functions(self.engine); PluginLoader().load(self.engine)
         self.workbook = Workbook(name="Untitled"); self.workbook.add_sheet("Sheet1")
         self.calculation = WorkbookCalculationService(self.workbook, self.engine)
@@ -54,12 +57,15 @@ class MainWindow(QMainWindow):
         self.copy_a=self._make_action("Copy",QKeySequence.StandardKey.Copy,self._copy)
         self.paste_a=self._make_action("Paste",QKeySequence.StandardKey.Paste,self._paste)
         self.transform_a=self._make_action("Transform Data","Ctrl+Shift+T",self._transform_data)
+        self.connect_csv_a=self._make_action("Connect CSV",None,self._connect_csv)
+        self.connect_sqlite_a=self._make_action("Connect SQLite",None,self._connect_sqlite)
+        self.refresh_data_a=self._make_action("Refresh Data","Ctrl+Alt+R",self._refresh_data)
 
     def _chrome(self):
         file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a,self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out])
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.copy_a,self.paste_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
-        data_menu=self.menuBar().addMenu("Data"); data_menu.addAction(self.transform_a)
+        data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         bar.addActions([self.new_a,self.open_a,self.save_a]); bar.addSeparator(); bar.addActions([self.copy_a,self.paste_a]); bar.addSeparator(); bar.addAction(self.add_a); self.addToolBar(bar)
         root=QWidget(); layout=QVBoxLayout(root); layout.setContentsMargins(10,10,10,8)
@@ -186,6 +192,39 @@ class MainWindow(QMainWindow):
         sheet.metadata["transformations"]=[step.to_dict() for step in dialog.steps]
         self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
         self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Applied {len(dialog.steps)} transformation step(s)",3000)
+
+    def _connect_csv(self):
+        path,_=QFileDialog.getOpenFileName(self,"Connect CSV","","CSV File (*.csv)")
+        if not path:return
+        self._load_source(DataSourceSpec("csv",path,{"encoding":"utf-8-sig","delimiter":","}))
+
+    def _connect_sqlite(self):
+        path,_=QFileDialog.getOpenFileName(self,"Connect SQLite","","SQLite Database (*.sqlite *.sqlite3 *.db);;All Files (*)")
+        if not path:return
+        try:tables=self.connectors.list_sqlite_tables(path)
+        except DataConnectorError as exc:QMessageBox.warning(self,"SQLite connection failed",str(exc)); return
+        if not tables:QMessageBox.information(self,"Connect SQLite","No user tables were found."); return
+        table,ok=QInputDialog.getItem(self,"Connect SQLite","Table:",tables,0,False)
+        if ok:self._load_source(DataSourceSpec("sqlite",path,{"table":table,"limit":100000}))
+
+    def _load_source(self,source):
+        try:rows=self.connectors.load(source)
+        except DataConnectorError as exc:QMessageBox.warning(self,"Data connection failed",str(exc)); return
+        sheet=self.workbook.get_active_sheet(); rows_to_worksheet(rows,sheet)
+        sheet.metadata["data_source"]=source.to_dict(); sheet.metadata["transformations"]=[]
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
+        self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Loaded {len(rows):,} rows",3000)
+
+    def _refresh_data(self):
+        sheet=self.workbook.get_active_sheet(); payload=sheet.metadata.get("data_source")
+        if not isinstance(payload,dict):QMessageBox.information(self,"Refresh Data","The active sheet has no refreshable data source."); return
+        try:
+            source=DataSourceSpec.from_dict(payload); rows=self.connectors.load(source)
+            steps=sheet.metadata.get("transformations",[])
+            result=TransformationPipeline.from_dicts(steps).apply(rows)
+        except (DataConnectorError,KeyError,TypeError,ValueError) as exc:QMessageBox.warning(self,"Refresh failed",str(exc)); return
+        rows_to_worksheet(result,sheet); self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
+        self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Refreshed {len(result):,} rows from {len(rows):,} source rows",3500)
 
     def _unique(self,base,exclude=None):
         names={s.name for i,s in enumerate(self.workbook.sheets) if i!=exclude}; n=2
