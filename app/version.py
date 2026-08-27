@@ -1,3 +1,3 @@
 """Application release metadata."""
 
-__version__ = "0.10.0-rc1"
+__version__ = "0.11.0-rc1"

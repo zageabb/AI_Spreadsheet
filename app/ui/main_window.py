@@ -25,6 +25,10 @@ from app.services.data_connectors import DataConnectorError, DataConnectorServic
 from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
     worksheet_to_rows)
 from app.services.recovery import RecoveryManager, autosave_enabled, autosave_interval_seconds
+from app.services.ai_assistant import (
+    AICellContext, AISelectionContext, AISettings, SpreadsheetAIAssistant,
+    build_selection_context,
+)
 from app.storage import get_workbook_storage
 from app.storage.postgres_storage import PostgresStorageError, PostgresWorkbookStorage
 from app.ui.spreadsheet_model import SpreadsheetTableModel
@@ -32,6 +36,7 @@ from app.ui.theme import CONTEXT_STUDIO_QSS
 from app.ui.transformation_dialog import TransformationDialog
 from app.ui.sharing_dialog import SharingDialog
 from app.ui.custom_function_dialog import CustomFunctionDialog
+from app.ui.ai_assistant_dock import AIAssistantDock
 
 
 class CollaborationBridge(QObject):
@@ -59,7 +64,7 @@ class MainWindow(QMainWindow):
         self.calculation = WorkbookCalculationService(self.workbook, self.engine)
         self.current_file_path: str | None = None; self.dirty = False; self.access_role = "owner"
         self.last_recovery_path: Path | None = None
-        self._actions(); self._chrome(); self._tabs(); self._title(); self._start_autosave()
+        self._actions(); self._chrome(); self._create_ai_dock(); self._tabs(); self._title(); self._start_autosave()
         QTimer.singleShot(0,self._offer_recovery)
 
     def _make_action(self, label, shortcut, callback):
@@ -87,6 +92,8 @@ class MainWindow(QMainWindow):
         self.refresh_data_a=self._make_action("Refresh Data","Ctrl+Alt+R",self._refresh_data)
         self.share_a=self._make_action("Share Workbook",None,self._share_workbook)
         self.custom_functions_a=self._make_action("Custom Python Functions",None,self._custom_functions)
+        self.ai_a=self._make_action("AI Assistant","Ctrl+Shift+A",lambda:self.ai_dock.setVisible(not self.ai_dock.isVisible()))
+        self.ai_a.setCheckable(True); self.ai_a.setChecked(True)
         self.sign_out_a=self._make_action("Sign Out",None,self.close)
 
     def _chrome(self):
@@ -95,7 +102,7 @@ class MainWindow(QMainWindow):
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
         data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
         access_menu=self.menuBar().addMenu("Access"); access_menu.addAction(self.share_a)
-        tools_menu=self.menuBar().addMenu("Tools"); tools_menu.addAction(self.custom_functions_a)
+        tools_menu=self.menuBar().addMenu("Tools"); tools_menu.addActions([self.ai_a,self.custom_functions_a])
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         bar.addActions([self.new_a,self.open_a,self.save_a]); bar.addSeparator(); bar.addActions([self.copy_a,self.paste_a]); bar.addSeparator(); bar.addAction(self.add_a); self.addToolBar(bar)
         root=QWidget(); layout=QVBoxLayout(root); layout.setContentsMargins(10,10,10,8)
@@ -361,6 +368,70 @@ class MainWindow(QMainWindow):
                 f"Registered custom functions: {', '.join(dialog.saved_functions)}",5000
             )
 
+    def _create_ai_dock(self):
+        try:settings=AISettings.from_env()
+        except ValueError as exc:
+            settings=AISettings(False,"ollama","http://127.0.0.1:11434","disabled","",60,200,50)
+            self.statusBar().showMessage(f"AI configuration error: {exc}",6000)
+        self.ai_dock=AIAssistantDock(
+            context_provider=self._ai_selection_context,
+            assistant=SpreadsheetAIAssistant(settings=settings),parent=self,
+        )
+        self.ai_dock.apply_requested.connect(self._apply_ai_proposals)
+        self.ai_dock.visibilityChanged.connect(self.ai_a.setChecked)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,self.ai_dock)
+
+    def _ai_selection_context(self):
+        view=self._current()
+        if view is None:raise RuntimeError("Open a worksheet before asking the AI assistant.")
+        settings=self.ai_dock.assistant.settings
+        ranges=list(view.selectionModel().selection())
+        if not ranges and view.currentIndex().isValid():
+            index=view.currentIndex(); bounds=(index.row(),index.column(),index.row(),index.column())
+        elif ranges:
+            bounds=(min(item.top() for item in ranges),min(item.left() for item in ranges),
+                    max(item.bottom() for item in ranges),max(item.right() for item in ranges))
+        else:raise RuntimeError("Select one or more cells first.")
+        start=CellAddress(bounds[0],bounds[1]).a1(False); end=CellAddress(bounds[2],bounds[3]).a1(False)
+        sheet=self.workbook.get_active_sheet(); cells=[]
+        if not ranges:
+            address=start; cell=sheet.cells.get(address)
+            cells.append(AICellContext(address,cell.value if cell else None,cell.formula if cell else None))
+        for selected in ranges:
+            for row in range(selected.top(),selected.bottom()+1):
+                for column in range(selected.left(),selected.right()+1):
+                    address=CellAddress(row,column).a1(False); cell=sheet.cells.get(address)
+                    cells.append(AICellContext(address,cell.value if cell else None,cell.formula if cell else None))
+                    if len(cells)>settings.max_context_cells:break
+                if len(cells)>settings.max_context_cells:break
+            if len(cells)>settings.max_context_cells:break
+        return build_selection_context(
+            self.workbook.name,sheet.name,start if start==end else f"{start}:{end}",
+            cells,settings.max_context_cells,
+        )
+
+    def _apply_ai_proposals(self,proposals):
+        if not self._can_edit():
+            QMessageBox.warning(self,"Read only","AI proposals cannot be applied to a read-only workbook."); return
+        answer=QMessageBox.question(
+            self,"Apply AI proposals",
+            f"Apply {len(proposals)} proposed cell change(s)? Review the proposal list before continuing.",
+        )
+        if answer!=QMessageBox.StandardButton.Yes:return
+        changed=set()
+        for proposal in proposals:
+            sheet=next((item for item in self.workbook.sheets if item.name==proposal.sheet_name),None)
+            if sheet is None:continue
+            cell=sheet.get_cell(proposal.address); cell.formula=proposal.formula
+            cell.value=None if proposal.formula is not None else proposal.value
+            changed.add(self.calculation.cell_key(sheet.name,proposal.address))
+        self.calculation.recalculate(changed); self._mark_dirty()
+        for index in range(self.tabs.count()):
+            view=self.tabs.widget(index)
+            if isinstance(view,QTableView):view.model().refresh()
+        self.ai_dock.mark_proposals_applied()
+        self.statusBar().showMessage(f"Applied {len(changed)} approved AI proposal(s)",4000)
+
     def _start_autosave(self):
         self.autosave_timer=QTimer(self)
         try:
@@ -525,6 +596,10 @@ class MainWindow(QMainWindow):
         self._mark_dirty(); self.statusBar().showMessage(f"Live update: {sheet.name}!{address}",1800)
 
     def closeEvent(self,event):
+        if hasattr(self,"ai_dock") and self.ai_dock.worker is not None:
+            QMessageBox.information(
+                self,"AI request running","Wait for the current AI request to finish before closing."
+            ); event.ignore(); return
         if self.dirty:
             answer=QMessageBox.question(
                 self,"Unsaved changes","Save changes before closing?",

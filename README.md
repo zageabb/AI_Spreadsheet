@@ -288,7 +288,11 @@ Use **Tools → Custom Python Functions** to write an uppercase function such as
 
 Dirty editable workbooks receive timed local recovery snapshots without overwriting their primary JSON or PostgreSQL record. Recovery is scoped to the signed-in identity and offered at the next startup. The desktop also prompts before closing with unsaved changes, shows recovery state in the status bar, and provides **File → Open Recent** for local JSON workbooks.
 
-Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.10.0-rc1`.
+Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.11.0-rc1`.
+
+## Grounded AI assistant
+
+The Context Studio-styled right-side assistant works with a bounded copy of the current selection. It can explain formulas, analyse values and propose changes through Ollama or an OpenAI-compatible endpoint. Provider output is untrusted and schema-validated; changes are displayed for review and require explicit approval, and viewers cannot apply them. The workbook remains fully usable when AI is disabled or offline. See [`docs/ai_assistant.md`](docs/ai_assistant.md).
 
 
 ## Controlled live collaboration

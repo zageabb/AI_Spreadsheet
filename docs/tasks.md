@@ -47,6 +47,16 @@
 - [x] Windows, macOS and Ubuntu GitHub Actions build matrix
 - [x] Release documentation and regression tests
 
+## Phase 11 — Grounded AI spreadsheet copilot
+- [x] Context Studio right-side assistant dock
+- [x] Bounded selected-cell context with large-selection protection
+- [x] Configurable Ollama and OpenAI-compatible providers
+- [x] Formula explanation, selection analysis and proposed cell changes
+- [x] Strict response and proposal validation
+- [x] Explicit approval before edits; no silent workbook mutation
+- [x] Read-only permission enforcement and graceful offline behaviour
+- [x] Security, grounding and regression tests
+
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure
 - [ ] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`
