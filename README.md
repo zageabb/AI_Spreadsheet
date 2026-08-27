@@ -31,12 +31,13 @@ AI_Spreadsheet/
 - Desktop shell (`PySide6`) with:
   - main window
   - menu bar (file/edit/sheet actions)
-  - toolbar groups for file and edit actions
+  - toolbar groups for file, edit and formatting actions
   - formula bar with active-cell name box
   - worksheet grid with row/column headers
   - sheet tabs with add/rename/duplicate/delete actions
   - status bar with cell position and edit mode indicators
-  - keyboard shortcuts for common actions (save, copy/paste, undo/redo)
+  - keyboard shortcuts for common actions (save, copy/paste, undo/redo, find, cell editing and navigation)
+  - reversible find/replace, row/column operations, range sorting and non-destructive row filtering
   - email/password sign-in and account creation
   - owner-only workbook sharing and ownership transfer
   - access-aware owner, editor, and read-only viewer modes
@@ -288,7 +289,11 @@ Use **Tools → Custom Python Functions** to write an uppercase function such as
 
 Dirty editable workbooks receive timed local recovery snapshots without overwriting their primary JSON or PostgreSQL record. Recovery is scoped to the signed-in identity and offered at the next startup. The desktop also prompts before closing with unsaved changes, shows recovery state in the status bar, and provides **File → Open Recent** for local JSON workbooks.
 
-Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.11.0-rc1`.
+Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.12.0-rc1`.
+
+## Editing essentials
+
+Phase 12 adds workbook-scoped undo/redo, modeless find and replace, clear/insert/delete operations, formula-aware row and column changes, range sorting, non-destructive row filtering and common cell formatting controls. See [`docs/editing_essentials.md`](docs/editing_essentials.md) for behaviour and shortcuts.
 
 ## Grounded AI assistant
 

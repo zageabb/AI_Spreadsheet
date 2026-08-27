@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Callable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
@@ -9,12 +10,14 @@ from PySide6.QtGui import QColor, QFont
 
 from app.core.coordinates import CellAddress, column_index_to_label
 from app.models.sheet import Worksheet
+from app.services.worksheet_editing import snapshot
 
 
 class SpreadsheetTableModel(QAbstractTableModel):
     """Expose a large logical grid without allocating one widget per cell."""
 
     cell_edited = Signal(str, object, object)
+    cell_editing = Signal(object)
 
     def __init__(self, worksheet: Worksheet, rows: int = 100_000, columns: int = 1_024,
                  evaluator: Callable[[Worksheet, str, str], Any] | None = None,
@@ -65,9 +68,10 @@ class SpreadsheetTableModel(QAbstractTableModel):
     def setData(self, index: QModelIndex, value: Any, role: int = Qt.ItemDataRole.EditRole) -> bool:
         if not self.editable or role != Qt.ItemDataRole.EditRole or not index.isValid():
             return False
+        self.cell_editing.emit(snapshot(self.worksheet))
         address = self.address(index)
         cell = self.worksheet.get_cell(address)
-        before = cell.formula if cell.formula else cell.value
+        before = deepcopy(cell.to_dict())
         text = "" if value is None else str(value)
         if text.startswith("="):
             cell.formula = text
@@ -75,8 +79,9 @@ class SpreadsheetTableModel(QAbstractTableModel):
         else:
             cell.formula = None
             cell.value = self._infer_scalar(text)
+        after = deepcopy(cell.to_dict())
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
-        self.cell_edited.emit(address, before, value)
+        self.cell_edited.emit(address, before, after)
         return True
 
     def flags(self, index: QModelIndex):

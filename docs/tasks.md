@@ -57,6 +57,16 @@
 - [x] Read-only permission enforcement and graceful offline behaviour
 - [x] Security, grounding and regression tests
 
+## Phase 12 — Editing essentials
+- [x] Workbook-scoped undo and redo for cell and range edits
+- [x] Modeless find and replace with case-sensitive matching
+- [x] Clear, insert and delete operations for cells, rows and columns
+- [x] Formula-reference adjustment after structural edits
+- [x] Ascending/descending range sorting and non-destructive row filtering
+- [x] Bold, italic, underline, fill, font colour and number-format controls
+- [x] F2, Ctrl+Home, Ctrl+End and standard editing shortcuts
+- [x] Read-only permission enforcement and regression tests
+
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure
 - [ ] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`
