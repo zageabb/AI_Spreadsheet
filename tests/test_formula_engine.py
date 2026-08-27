@@ -41,6 +41,10 @@ def test_starter_function_set_is_registered() -> None:
         "TODAY",
         "TEXTJOIN",
         "SUMPRODUCT",
+        "SEQUENCE",
+        "FILTER",
+        "SORT",
+        "UNIQUE",
     ]:
         assert engine.has_function(fn_name)
 
@@ -109,6 +113,14 @@ def test_formula_propagates_resolved_cell_errors() -> None:
 def test_divide_by_zero_error() -> None:
     engine = _build_engine()
     assert engine.evaluate("=1/0") == "#DIV/0!"
+
+
+def test_lazy_error_and_if_functions_do_not_evaluate_unused_branches() -> None:
+    engine = _build_engine()
+    assert engine.evaluate("=IF(FALSE,1/0,42)") == 42.0
+    assert engine.evaluate("=IFERROR(1/0,99)") == 99.0
+    assert engine.evaluate('=IFNA(MATCH("x","y",0),"missing")') == "missing"
+    assert engine.evaluate("=IFNA(1/0,0)") == "#DIV/0!"
 
 
 def test_plugin_loader_loads_uppercase_runtime_functions(tmp_path) -> None:

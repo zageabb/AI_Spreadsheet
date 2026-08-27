@@ -16,6 +16,7 @@ class WorkbookCalculationService:
         self.engine = engine
         self.graph = DependencyGraph()
         self._formula_cells: dict[str, tuple[str, str]] = {}
+        self._spill_cells: dict[str, set[str]] = {}
 
     @staticmethod
     def cell_key(sheet_name: str, address: str) -> str:
@@ -35,6 +36,7 @@ class WorkbookCalculationService:
 
     def recalculate(self, changed: set[str] | None = None) -> set[str]:
         """Recalculate changed cells and all downstream dependents."""
+        self._clear_previous_spills()
         self.rebuild_graph()
         targets = set(self._formula_cells) if changed is None else self.graph.affected_by(changed)
         try:
@@ -51,13 +53,28 @@ class WorkbookCalculationService:
                 continue
             sheet_name, address = details
             cell = self._sheet(sheet_name).get_cell(address)
-            cell.value = self.evaluate_formula(sheet_name, cell.formula or "")
+            result = self.evaluate_formula(sheet_name, cell.formula or "")
+            if isinstance(result, RangeValue):
+                cell.value = self._spill_array(key, sheet_name, address, result)
+            else:
+                cell.value = result
+        spilled_keys = set().union(*self._spill_cells.values()) if self._spill_cells else set()
+        if spilled_keys:
+            downstream = self.graph.affected_by(spilled_keys) & self._formula_cells.keys()
+            for key in self.graph.calculation_order(downstream):
+                details = self._formula_cells.get(key)
+                if details is None or key in self._spill_cells:
+                    continue
+                sheet_name, address = details
+                cell = self._sheet(sheet_name).get_cell(address)
+                cell.value = self.evaluate_formula(sheet_name, cell.formula or "")
         return targets
 
     def evaluate_formula(self, current_sheet: str, formula: str):
         context = {
             "get_cell_value": lambda reference: self._value(reference, current_sheet),
             "get_range_values": lambda start, end: self._range_values(start, end, current_sheet),
+            "get_structured_values": lambda reference: self._structured_values(reference),
         }
         return self.engine.evaluate(formula, context)
 
@@ -71,7 +88,74 @@ class WorkbookCalculationService:
             ranged_refs.update({start, end})
         for reference in references - ranged_refs:
             dependencies.add(self._key_from_reference(reference, current_sheet))
+        for reference in self.engine.extract_structured_references(formula):
+            sheet_name, start, end = self._structured_range(reference)
+            dependencies.update(self._range_keys(start, end, sheet_name))
         return dependencies
+
+    def _clear_previous_spills(self) -> None:
+        for keys in self._spill_cells.values():
+            for key in keys:
+                sheet_name, address = key.rsplit("!", 1)
+                cell = self._sheet(sheet_name).cells.get(address)
+                if cell is not None and cell.formula is None:
+                    cell.value = None
+        self._spill_cells.clear()
+
+    def _spill_array(
+        self, anchor_key: str, sheet_name: str, anchor_address: str, result: RangeValue
+    ):
+        anchor = CellAddress.parse(anchor_address)
+        targets: list[tuple[str, Any]] = []
+        for row_offset, row in enumerate(result):
+            for column_offset, value in enumerate(row):
+                address = CellAddress(anchor.row + row_offset, anchor.column + column_offset).a1(False)
+                cell = self._sheet(sheet_name).cells.get(address)
+                if address != anchor_address and cell is not None and (
+                    cell.formula is not None or cell.value not in (None, "")
+                ):
+                    return "#SPILL!"
+                targets.append((address, value))
+        spilled: set[str] = set()
+        for address, value in targets:
+            if address == anchor_address:
+                continue
+            self._sheet(sheet_name).get_cell(address).value = value
+            spilled.add(self.cell_key(sheet_name, address))
+        self._spill_cells[anchor_key] = spilled
+        return result[0][0] if result and result[0] else None
+
+    def _structured_values(self, reference: str) -> RangeValue:
+        sheet_name, start, end = self._structured_range(reference)
+        return self._range_values(start, end, sheet_name)
+
+    def _structured_range(self, reference: str) -> tuple[str, str, str]:
+        table_name, column_name = reference.split("[", 1)
+        column_name = column_name[:-1].strip()
+        for sheet in self.workbook.sheets:
+            tables = sheet.metadata.get("tables", [])
+            for table in tables if isinstance(tables, list) else []:
+                if not isinstance(table, dict):
+                    continue
+                names = {str(table.get("name", "")).lower(), str(table.get("display_name", "")).lower()}
+                if table_name.lower() not in names:
+                    continue
+                columns = [str(item) for item in table.get("columns", [])]
+                try:
+                    column_index = next(i for i, item in enumerate(columns) if item.lower() == column_name.lower())
+                except StopIteration as exc:
+                    raise KeyError(f"Unknown table column: {reference}") from exc
+                first_text, last_text = str(table["ref"]).split(":", 1)
+                first, last = CellAddress.parse(first_text), CellAddress.parse(last_text)
+                data_start = first.row + 1
+                data_end = last.row - (1 if table.get("totals_row_shown") else 0)
+                if data_end < data_start:
+                    raise KeyError(f"Table has no data rows: {table_name}")
+                column = first.column + column_index
+                start = CellAddress(data_start, column).a1(False)
+                end = CellAddress(data_end, column).a1(False)
+                return sheet.name, start, end
+        raise KeyError(f"Unknown table reference: {reference}")
 
     @staticmethod
     def _reference_groups(formula: str) -> list[tuple[str, str]]:

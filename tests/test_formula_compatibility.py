@@ -58,3 +58,42 @@ def test_dates_text_and_math_functions():
 def test_lookup_not_found_preserves_error_code():
     engine = _engine()
     assert engine.evaluate('=MATCH("missing","present",0)') == "#N/A"
+
+
+def test_dynamic_arrays_spill_and_report_blocked_ranges():
+    workbook, _data, summary, service = _workbook_service()
+    summary.get_cell("A1").formula = "=SEQUENCE(2,3,1,1)"
+    summary.get_cell("H1").formula = "=B2*10"
+    service.recalculate()
+    assert [[summary.get_cell(f"{column}{row}").value for column in "ABC"] for row in (1, 2)] == [
+        [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]
+    ]
+    assert summary.get_cell("H1").value == 50.0
+
+    summary.get_cell("E2").value = "occupied"
+    summary.get_cell("D1").formula = "=SEQUENCE(2,2)"
+    service.recalculate()
+    assert summary.get_cell("D1").value == "#SPILL!"
+    assert summary.get_cell("E1").value is None
+
+
+def test_filter_sort_unique_and_structured_table_references():
+    _workbook, data, summary, service = _workbook_service()
+    for row, values in enumerate((("Category", "Amount"), ("B", 20), ("A", 10), ("B", 20)), 1):
+        for column, value in zip("AB", values):
+            data.get_cell(f"{column}{row}").value = value
+    data.metadata["tables"] = [{
+        "name": "SalesTable", "display_name": "SalesTable", "ref": "A1:B4",
+        "columns": ["Category", "Amount"], "totals_row_shown": False,
+    }]
+    summary.get_cell("A1").formula = "=SUM(SalesTable[Amount])"
+    summary.get_cell("C1").formula = "=UNIQUE(SalesTable[Category])"
+    summary.get_cell("E1").formula = "=SORT(SalesTable[Amount],1,-1)"
+    summary.get_cell("G1").formula = '=FILTER(Data!A2:B4,Data!A2:A4="B","none")'
+    service.recalculate()
+    assert summary.get_cell("A1").value == 50.0
+    assert [summary.get_cell(f"C{row}").value for row in range(1, 3)] == ["B", "A"]
+    assert [summary.get_cell(f"E{row}").value for row in range(1, 4)] == [20, 20, 10]
+    assert [[summary.get_cell(f"{column}{row}").value for column in "GH"] for row in (1, 2)] == [
+        ["B", 20], ["B", 20]
+    ]

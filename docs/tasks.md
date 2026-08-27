@@ -12,13 +12,22 @@
 - [x] Formula ranges, `$` references, quoted cross-sheet references and workbook-wide recalculation
 - [x] Recalculate downstream cells in dependency order and report circular references as `#CIRC!`
 - [x] Expand compatibility with lookup, conditional aggregate, date, text and math functions
-- [ ] Add lazy error-handling functions, dynamic arrays and structured table references
+- [x] Add lazy error-handling functions, dynamic arrays and structured table references
 - [x] Add a Context Studio-styled transformation step builder with a 200-row preview
 - [x] Persist applied transformation steps in worksheet metadata
 - [x] Add refreshable CSV and read-only SQLite connectors
 - [x] Reload connected sources and replay saved transformation pipelines
 - [ ] Add authenticated REST API and PostgreSQL analytical connectors
-- [ ] Preserve charts, validation rules, tables and unsupported XLSX objects
+- [x] Preserve validation rules and tables in XLSX round trips
+- [ ] Preserve charts and unsupported XLSX objects through an OOXML passthrough layer
+
+## Milestone 9 — Excel compatibility and advanced formulas
+- [x] Lazy `IF`, `IFERROR`, and `IFNA` evaluation
+- [x] Spill-capable `SEQUENCE`, `FILTER`, `SORT`, and `UNIQUE`
+- [x] `#SPILL!` collision handling and downstream recalculation
+- [x] Excel table-column references such as `SalesTable[Amount]`
+- [x] XLSX table and data-validation round trips
+- [x] Regression tests and compatibility documentation
 
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure

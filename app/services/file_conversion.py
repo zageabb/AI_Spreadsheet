@@ -13,6 +13,8 @@ from typing import Any
 from openpyxl import Workbook as OpenPyxlWorkbook
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 from app.models.workbook import Workbook
@@ -51,6 +53,31 @@ class WorkbookFileConverter:
             imported_sheet.metadata["row_heights"] = {
                 str(key): value.height for key, value in source_sheet.row_dimensions.items() if value.height is not None
             }
+            imported_sheet.metadata["tables"] = [
+                {
+                    "name": table.name,
+                    "display_name": table.displayName,
+                    "ref": table.ref,
+                    "columns": [column.name for column in table.tableColumns],
+                    "totals_row_shown": bool(table.totalsRowShown),
+                    "style": table.tableStyleInfo.name if table.tableStyleInfo else None,
+                }
+                for table in source_sheet.tables.values()
+            ]
+            imported_sheet.metadata["data_validations"] = [
+                {
+                    "sqref": str(validation.sqref),
+                    "type": validation.type,
+                    "operator": validation.operator,
+                    "formula1": validation.formula1,
+                    "formula2": validation.formula2,
+                    "allow_blank": validation.allow_blank,
+                    "show_error_message": validation.showErrorMessage,
+                    "error_title": validation.errorTitle,
+                    "error": validation.error,
+                }
+                for validation in source_sheet.data_validations.dataValidation
+            ]
             value_sheet = values_wb.worksheets[sheet_index] if sheet_index < len(values_wb.worksheets) else None
 
             max_row = source_sheet.max_row or 0
@@ -92,6 +119,7 @@ class WorkbookFileConverter:
             target.remove(default_sheet)
 
             existing_names: set[str] = set()
+            existing_table_names: set[str] = set()
             for sheet in workbook.sheets:
                 sheet_name = self._make_unique_sheet_name(sheet.name or "Sheet", existing_names)
                 existing_names.add(sheet_name)
@@ -116,6 +144,39 @@ class WorkbookFileConverter:
                     else:
                         target_cell.value = cell.value
                     self._apply_formatting(target_cell, cell.formatting)
+
+                for table_data in sheet.metadata.get("tables", []):
+                    if not isinstance(table_data, dict) or not table_data.get("ref"):
+                        continue
+                    table_name = self._safe_table_name(
+                        str(table_data.get("display_name") or table_data.get("name") or "Table"),
+                        existing_table_names,
+                    )
+                    existing_table_names.add(table_name)
+                    table = Table(displayName=table_name, ref=str(table_data["ref"]))
+                    style_name = table_data.get("style") or "TableStyleMedium2"
+                    table.tableStyleInfo = TableStyleInfo(
+                        name=str(style_name), showFirstColumn=False, showLastColumn=False,
+                        showRowStripes=True, showColumnStripes=False,
+                    )
+                    table.totalsRowShown = bool(table_data.get("totals_row_shown", False))
+                    target_sheet.add_table(table)
+
+                for validation_data in sheet.metadata.get("data_validations", []):
+                    if not isinstance(validation_data, dict) or not validation_data.get("sqref"):
+                        continue
+                    validation = DataValidation(
+                        type=validation_data.get("type"),
+                        operator=validation_data.get("operator"),
+                        formula1=validation_data.get("formula1"),
+                        formula2=validation_data.get("formula2"),
+                        allow_blank=validation_data.get("allow_blank", False),
+                        showErrorMessage=validation_data.get("show_error_message", False),
+                        errorTitle=validation_data.get("error_title"),
+                        error=validation_data.get("error"),
+                    )
+                    target_sheet.add_data_validation(validation)
+                    validation.add(str(validation_data["sqref"]))
 
             if not workbook.sheets:
                 target.create_sheet(title="Sheet1")
@@ -314,3 +375,16 @@ class WorkbookFileConverter:
             if attempt not in existing_names:
                 return attempt
             suffix += 1
+
+    @staticmethod
+    def _safe_table_name(candidate: str, workbook_tables) -> str:
+        normalized = "".join(char if char.isalnum() or char == "_" else "_" for char in candidate)
+        if not normalized or normalized[0].isdigit():
+            normalized = f"Table_{normalized}"
+        existing = {name.lower() for name in workbook_tables}
+        attempt = normalized
+        suffix = 2
+        while attempt.lower() in existing:
+            attempt = f"{normalized}_{suffix}"
+            suffix += 1
+        return attempt

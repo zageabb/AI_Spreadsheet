@@ -268,6 +268,19 @@ Include `app/services/email_templates/` in desktop packages. Production builds s
 This keeps authorization logic separate from UI and separate from workbook model/business logic.
 
 
+## Excel 365 compatibility
+
+Phase 9 extends the calculation engine with:
+
+- lazy `IF`, `IFERROR`, and `IFNA`, so unused branches do not raise errors
+- dynamic-array `SEQUENCE`, `FILTER`, `SORT`, and `UNIQUE`
+- automatic multi-cell spilling with `#SPILL!` collision reporting
+- downstream recalculation for formulas that reference spilled cells
+- structured table-column references such as `SalesTable[Amount]`
+
+XLSX import/export now round-trips Excel tables, table styles, and data-validation rules in addition to formulas, core formatting, frozen panes, merged ranges, filters, widths, and heights. Charts and arbitrary unsupported OOXML objects are not yet preserved; that requires a future package-level passthrough layer rather than lossy model conversion.
+
+
 ## Controlled live collaboration
 
 The optional collaboration backend lives in `server/main.py` + `server/collaboration.py`, while transport remains isolated in `app/services/collaboration_client.py`:

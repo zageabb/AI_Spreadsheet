@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from openpyxl import load_workbook
+from openpyxl import Workbook as OpenPyxlWorkbook, load_workbook
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.table import Table
 
 from app.models.workbook import Workbook
 from app.services.file_conversion import WorkbookFileConverter
@@ -81,3 +83,31 @@ def test_csv_roundtrip_preserves_formulas_and_scalar_values(tmp_path) -> None:
     assert loaded_sheet.cells["B1"].value == 10
     assert loaded_sheet.cells["C1"].formula == "=B1*2"
     assert loaded_sheet.cells["A2"].value is True
+
+
+def test_xlsx_roundtrip_preserves_tables_and_data_validation(tmp_path) -> None:
+    source = OpenPyxlWorkbook()
+    sheet = source.active
+    sheet.title = "Data"
+    sheet.append(["Category", "Amount"])
+    sheet.append(["Hardware", 10])
+    sheet.append(["Software", 20])
+    sheet.add_table(Table(displayName="SalesTable", ref="A1:B3"))
+    validation = DataValidation(type="list", formula1='"Open,Closed"', allow_blank=True)
+    sheet.add_data_validation(validation)
+    validation.add("C2:C20")
+    source_path = tmp_path / "source.xlsx"
+    source.save(source_path)
+
+    converter = WorkbookFileConverter()
+    imported = converter.import_xlsx(str(source_path))
+    assert imported.sheets[0].metadata["tables"][0]["display_name"] == "SalesTable"
+    assert imported.sheets[0].metadata["data_validations"][0]["sqref"] == "C2:C20"
+
+    output_path = tmp_path / "output.xlsx"
+    converter.export_xlsx(str(output_path), imported)
+    exported = load_workbook(output_path)
+    assert "SalesTable" in exported["Data"].tables
+    rules = exported["Data"].data_validations.dataValidation
+    assert len(rules) == 1
+    assert str(rules[0].sqref) == "C2:C20"

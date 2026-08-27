@@ -11,6 +11,7 @@ CELL_REF_PATTERN = re.compile(
     r"^(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?[A-Za-z]+\$?[1-9][0-9]*$"
 )
 CELL_REF_TOKEN = r"(?:(?:'(?:[^']|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?[A-Za-z]+\$?[1-9][0-9]*"
+STRUCTURED_REF_TOKEN = r"[A-Za-z_][A-Za-z0-9_.]*\[[^\[\]]+\]"
 
 
 class FormulaEvaluationError(Exception):
@@ -79,6 +80,13 @@ class FormulaEngine:
         if not isinstance(formula, str):
             return set()
         return {token.value for token in _tokenize(formula.lstrip("=")) if token.kind == "CELL"}
+
+    @staticmethod
+    def extract_structured_references(formula: str) -> set[str]:
+        """Return Excel table-column references used by a formula."""
+        if not isinstance(formula, str):
+            return set()
+        return {token.value for token in _tokenize(formula.lstrip("=")) if token.kind == "STRUCTREF"}
 
     def evaluate(self, raw_value: Any, context: dict[str, Any] | None = None) -> Any:
         """Evaluate a value if it is a formula.
@@ -180,6 +188,9 @@ class _Parser:
                 return self._resolve_range(reference, end)
             return self._resolve_reference(reference)
 
+        if token.kind == "STRUCTREF":
+            return self._resolve_structured_reference(self._consume("STRUCTREF").value)
+
         if token.kind == "IDENT":
             ident = self._consume("IDENT").value
             if self._peek().kind == "LPAREN":
@@ -192,6 +203,8 @@ class _Parser:
 
     def _parse_function_call(self, fn_name: str) -> Any:
         self._consume("LPAREN")
+        if fn_name.upper() in {"IF", "IFERROR", "IFNA"}:
+            return self._parse_lazy_function(fn_name.upper())
         args: list[Any] = []
 
         if self._peek().kind != "RPAREN":
@@ -217,6 +230,46 @@ class _Parser:
                 raise FormulaEvaluationError(code) from exc
             raise FormulaEvaluationError("#VALUE!", str(exc)) from exc
 
+    def _parse_lazy_function(self, fn_name: str) -> Any:
+        groups = self._argument_groups()
+        if fn_name == "IF":
+            if len(groups) not in {2, 3}:
+                raise FormulaEvaluationError("#VALUE!", "IF expects two or three arguments")
+            condition = self._evaluate_group(groups[0])
+            selected = groups[1] if _excel_truthy(condition) else (groups[2] if len(groups) == 3 else [])
+            return self._evaluate_group(selected) if selected else False
+        if len(groups) != 2:
+            raise FormulaEvaluationError("#VALUE!", f"{fn_name} expects two arguments")
+        try:
+            return self._evaluate_group(groups[0])
+        except FormulaEvaluationError as exc:
+            if fn_name == "IFNA" and exc.code != "#N/A":
+                raise
+            return self._evaluate_group(groups[1])
+
+    def _argument_groups(self) -> list[list[Token]]:
+        groups: list[list[Token]] = [[]]
+        depth = 0
+        while True:
+            token = self._consume()
+            if token.kind == "EOF":
+                raise FormulaEvaluationError("#PARSE!", "Unclosed function call")
+            if token.kind == "LPAREN":
+                depth += 1
+            elif token.kind == "RPAREN":
+                if depth == 0:
+                    return groups
+                depth -= 1
+            if token.kind == "COMMA" and depth == 0:
+                groups.append([])
+            else:
+                groups[-1].append(token)
+
+    def _evaluate_group(self, tokens: list[Token]) -> Any:
+        if not tokens:
+            raise FormulaEvaluationError("#VALUE!", "Missing function argument")
+        return _Parser(tokens=tokens, engine=self.engine, context=self.context).parse()
+
     def _resolve_reference(self, reference: str) -> Any:
         resolver = self.context.get("get_cell_value")
         if resolver is None:
@@ -239,6 +292,17 @@ class _Parser:
             raise FormulaEvaluationError("#REF!", f"No range resolver for {start}:{end}")
         try:
             return resolver(start, end)
+        except FormulaEvaluationError:
+            raise
+        except Exception as exc:
+            raise FormulaEvaluationError("#REF!", str(exc)) from exc
+
+    def _resolve_structured_reference(self, reference: str) -> Any:
+        resolver = self.context.get("get_structured_values")
+        if resolver is None:
+            raise FormulaEvaluationError("#REF!", f"No table resolver for {reference}")
+        try:
+            return resolver(reference)
         except FormulaEvaluationError:
             raise
         except Exception as exc:
@@ -281,21 +345,21 @@ class _Parser:
         raise FormulaEvaluationError("#ERROR!", f"Unknown operator {op}")
 
     @staticmethod
-    def _apply_comparison(op: str, left: Any, right: Any) -> bool:
-        if op == "EQ":
-            return left == right
-        if op == "NE":
-            return left != right
-        if op == "LT":
-            return left < right
-        if op == "LE":
-            return left <= right
-        if op == "GT":
-            return left > right
-        if op == "GE":
-            return left >= right
-        raise FormulaEvaluationError("#ERROR!", f"Unknown comparison operator {op}")
-
+    def _apply_comparison(op: str, left: Any, right: Any) -> Any:
+        if isinstance(left, RangeValue) or isinstance(right, RangeValue):
+            left_rows = left if isinstance(left, RangeValue) else None
+            right_rows = right if isinstance(right, RangeValue) else None
+            shape = left_rows or right_rows or []
+            result: list[list[bool]] = []
+            for row_index, row in enumerate(shape):
+                result_row: list[bool] = []
+                for column_index, _value in enumerate(row):
+                    lhs = left_rows[row_index][column_index] if left_rows else left
+                    rhs = right_rows[row_index][column_index] if right_rows else right
+                    result_row.append(_compare_scalar(op, lhs, rhs))
+                result.append(result_row)
+            return RangeValue(result)
+        return _compare_scalar(op, left, right)
     def _peek(self) -> Token:
         return self.tokens[self.index]
 
@@ -307,12 +371,29 @@ class _Parser:
         return token
 
 
+def _compare_scalar(op: str, left: Any, right: Any) -> bool:
+    if op == "EQ":
+        return left == right
+    if op == "NE":
+        return left != right
+    if op == "LT":
+        return left < right
+    if op == "LE":
+        return left <= right
+    if op == "GT":
+        return left > right
+    if op == "GE":
+        return left >= right
+    raise FormulaEvaluationError("#ERROR!", f"Unknown comparison operator {op}")
+
+
 def _tokenize(expression: str) -> list[Token]:
     """Tokenize a formula expression into parser tokens."""
     token_specs: list[tuple[str, str]] = [
         ("SPACE", r"[ \t\r\n]+"),
         ("NUMBER", r"\d+(?:\.\d+)?"),
         ("STRING", r'"([^"\\]|\\.)*"'),
+        ("STRUCTREF", STRUCTURED_REF_TOKEN),
         ("CELL", CELL_REF_TOKEN),
         ("LE", r"<="),
         ("GE", r">="),
@@ -366,3 +447,17 @@ def flatten_args(args: Iterable[Any]) -> list[Any]:
         else:
             flattened.append(arg)
     return flattened
+
+
+def _excel_truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized in {"", "FALSE", "NO", "N"}:
+            return False
+        if normalized in {"TRUE", "YES", "Y"}:
+            return True
+        try:
+            return float(normalized) != 0
+        except ValueError:
+            return True
+    return bool(value)
