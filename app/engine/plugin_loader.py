@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import util
 from inspect import getmembers, isfunction
 from pathlib import Path
+import os
 
 from app.engine.formula_engine import FormulaEngine
 
@@ -27,7 +28,11 @@ class PluginLoader:
         if not self.plugins_dir.exists():
             return registered
 
-        for plugin_file in sorted(self.plugins_dir.glob("*.py")):
+        custom_dir = Path(os.getenv("CUSTOM_FUNCTIONS_DIR", "plugins/user")).expanduser()
+        candidates = set(self.plugins_dir.glob("*.py"))
+        if custom_dir.exists():
+            candidates.update(custom_dir.glob("*.py"))
+        for plugin_file in sorted(candidates):
             if plugin_file.name.startswith("_"):
                 continue
 

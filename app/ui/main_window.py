@@ -30,6 +30,7 @@ from app.ui.spreadsheet_model import SpreadsheetTableModel
 from app.ui.theme import CONTEXT_STUDIO_QSS
 from app.ui.transformation_dialog import TransformationDialog
 from app.ui.sharing_dialog import SharingDialog
+from app.ui.custom_function_dialog import CustomFunctionDialog
 
 
 class CollaborationBridge(QObject):
@@ -81,6 +82,7 @@ class MainWindow(QMainWindow):
         self.connect_sqlite_a=self._make_action("Connect SQLite",None,self._connect_sqlite)
         self.refresh_data_a=self._make_action("Refresh Data","Ctrl+Alt+R",self._refresh_data)
         self.share_a=self._make_action("Share Workbook",None,self._share_workbook)
+        self.custom_functions_a=self._make_action("Custom Python Functions",None,self._custom_functions)
         self.sign_out_a=self._make_action("Sign Out",None,self.close)
 
     def _chrome(self):
@@ -89,6 +91,7 @@ class MainWindow(QMainWindow):
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
         data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
         access_menu=self.menuBar().addMenu("Access"); access_menu.addAction(self.share_a)
+        tools_menu=self.menuBar().addMenu("Tools"); tools_menu.addAction(self.custom_functions_a)
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         bar.addActions([self.new_a,self.open_a,self.save_a]); bar.addSeparator(); bar.addActions([self.copy_a,self.paste_a]); bar.addSeparator(); bar.addAction(self.add_a); self.addToolBar(bar)
         root=QWidget(); layout=QVBoxLayout(root); layout.setContentsMargins(10,10,10,8)
@@ -333,6 +336,17 @@ class MainWindow(QMainWindow):
         if dialog.changed:
             self.access_role=self._resolve_access(self.workbook) or "viewer"
             self._mark_dirty(); self._tabs()
+
+    def _custom_functions(self):
+        dialog=CustomFunctionDialog(self.engine,parent=self)
+        if dialog.exec() and dialog.saved_functions:
+            self.calculation.recalculate()
+            for index in range(self.tabs.count()):
+                view=self.tabs.widget(index)
+                if isinstance(view,QTableView):view.model().refresh()
+            self.statusBar().showMessage(
+                f"Registered custom functions: {', '.join(dialog.saved_functions)}",5000
+            )
 
     def _collaboration_key(self):
         if not self.current_file_path:return None

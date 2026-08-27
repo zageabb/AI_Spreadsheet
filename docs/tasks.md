@@ -19,7 +19,7 @@
 - [x] Reload connected sources and replay saved transformation pipelines
 - [ ] Add authenticated REST API and PostgreSQL analytical connectors
 - [x] Preserve validation rules and tables in XLSX round trips
-- [ ] Preserve charts and unsupported XLSX objects through an OOXML passthrough layer
+- [x] Preserve supported charts, drawings, images and package relationships through an OOXML template layer
 
 ## Milestone 9 — Excel compatibility and advanced formulas
 - [x] Lazy `IF`, `IFERROR`, and `IFNA` evaluation
@@ -28,6 +28,14 @@
 - [x] Excel table-column references such as `SalesTable[Amount]`
 - [x] XLSX table and data-validation round trips
 - [x] Regression tests and compatibility documentation
+
+## Milestone 10 — Extensibility and OOXML preservation
+- [x] Verified, size-limited OOXML package snapshots
+- [x] Template-based Excel export preserving charts and drawings
+- [x] Context Studio-styled custom Python function editor
+- [x] Validated local function persistence and immediate registration
+- [x] Startup discovery for user-authored function modules
+- [x] Security, round-trip and regression tests
 
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure

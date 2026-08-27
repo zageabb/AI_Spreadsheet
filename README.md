@@ -278,7 +278,11 @@ Phase 9 extends the calculation engine with:
 - downstream recalculation for formulas that reference spilled cells
 - structured table-column references such as `SalesTable[Amount]`
 
-XLSX import/export now round-trips Excel tables, table styles, and data-validation rules in addition to formulas, core formatting, frozen panes, merged ranges, filters, widths, and heights. Charts and arbitrary unsupported OOXML objects are not yet preserved; that requires a future package-level passthrough layer rather than lossy model conversion.
+XLSX import/export now round-trips Excel tables, table styles, and data-validation rules in addition to formulas, core formatting, frozen panes, merged ranges, filters, widths, and heights. A verified OOXML template layer retains the original package and updates it in place, preserving supported charts, drawings, images and relationships. See [`docs/ooxml_and_custom_functions.md`](docs/ooxml_and_custom_functions.md).
+
+## Custom Python functions
+
+Use **Tools → Custom Python Functions** to write an uppercase function such as `DOUBLE(value)`, validate it, save it locally, and use it immediately as `=DOUBLE(A1)`. The editor blocks imports, file/network/process access, dynamic execution and private attribute access while exposing calculation-oriented built-ins plus `math` and `statistics`. User modules are stored in `CUSTOM_FUNCTIONS_DIR` (`plugins/user` by default) and reloaded at startup. Custom code runs locally, so only save functions you understand.
 
 
 ## Controlled live collaboration

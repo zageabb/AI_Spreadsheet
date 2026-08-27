@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
 from openpyxl import Workbook as OpenPyxlWorkbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table
+from openpyxl.chart import BarChart, Reference
 
 from app.models.workbook import Workbook
 from app.services.file_conversion import WorkbookFileConverter
+from app.services.ooxml_preservation import OOXMLPreservationError, OOXMLPreservationLayer
 
 
 def test_xlsx_roundtrip_preserves_sheet_names_values_formulas_and_core_formatting(tmp_path) -> None:
@@ -111,3 +114,34 @@ def test_xlsx_roundtrip_preserves_tables_and_data_validation(tmp_path) -> None:
     rules = exported["Data"].data_validations.dataValidation
     assert len(rules) == 1
     assert str(rules[0].sqref) == "C2:C20"
+
+
+def test_ooxml_template_preserves_chart_and_tracks_package_integrity(tmp_path) -> None:
+    source = OpenPyxlWorkbook()
+    sheet = source.active
+    sheet.title = "Metrics"
+    sheet.append(["Month", "Value"])
+    sheet.append(["Jan", 10])
+    sheet.append(["Feb", 20])
+    chart = BarChart()
+    chart.add_data(Reference(sheet, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    sheet.add_chart(chart, "D2")
+    source_path = tmp_path / "chart.xlsx"
+    source.save(source_path)
+
+    converter = WorkbookFileConverter()
+    imported = converter.import_xlsx(str(source_path))
+    snapshot = imported.metadata["ooxml_passthrough"]
+    assert snapshot["size"] > 0
+    assert snapshot["preserved_parts"] >= 2
+    imported.sheets[0].get_cell("B2").value = 15
+
+    output_path = tmp_path / "chart-output.xlsx"
+    converter.export_xlsx(str(output_path), imported)
+    exported = load_workbook(output_path)
+    assert exported["Metrics"]["B2"].value == 15
+    assert len(exported["Metrics"]._charts) == 1
+
+    snapshot["sha256"] = "0" * 64
+    with pytest.raises(OOXMLPreservationError):
+        OOXMLPreservationLayer().restore_bytes(imported.metadata)

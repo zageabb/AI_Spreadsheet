@@ -18,6 +18,9 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 from app.models.workbook import Workbook
+from app.services.ooxml_preservation import (
+    OOXML_METADATA_KEY, OOXMLPreservationError, OOXMLPreservationLayer,
+)
 
 
 _INVALID_SHEET_CHARS = set('[]:*?/\\')
@@ -30,6 +33,9 @@ class WorkbookConversionError(Exception):
 class WorkbookFileConverter:
     """Import/export workbook files using practical compatibility rules."""
 
+    def __init__(self, ooxml_layer: OOXMLPreservationLayer | None = None) -> None:
+        self.ooxml_layer = ooxml_layer or OOXMLPreservationLayer()
+
     def import_xlsx(self, path: str) -> Workbook:
         """Import an `.xlsx` file into the app workbook model."""
         file_path = Path(path)
@@ -41,9 +47,14 @@ class WorkbookFileConverter:
 
         workbook = Workbook(name=file_path.stem or "Imported Workbook")
         workbook.sheets = []
+        try:
+            workbook.metadata[OOXML_METADATA_KEY] = self.ooxml_layer.capture(file_path)
+        except OOXMLPreservationError as exc:
+            raise WorkbookConversionError(f"Failed to preserve Excel OOXML package: {exc}") from exc
 
         for sheet_index, source_sheet in enumerate(formulas_wb.worksheets):
             imported_sheet = workbook.add_sheet(source_sheet.title)
+            imported_sheet.metadata["ooxml_original_title"] = source_sheet.title
             imported_sheet.metadata["freeze_panes"] = str(source_sheet.freeze_panes) if source_sheet.freeze_panes else None
             imported_sheet.metadata["merged_ranges"] = [str(item) for item in source_sheet.merged_cells.ranges]
             imported_sheet.metadata["auto_filter"] = source_sheet.auto_filter.ref
@@ -82,6 +93,7 @@ class WorkbookFileConverter:
 
             max_row = source_sheet.max_row or 0
             max_col = source_sheet.max_column or 0
+            imported_addresses: list[str] = []
 
             for row in range(1, max_row + 1):
                 for col in range(1, max_col + 1):
@@ -95,6 +107,7 @@ class WorkbookFileConverter:
                         continue
 
                     model_cell = imported_sheet.get_cell(address)
+                    imported_addresses.append(address)
                     if isinstance(excel_cell.value, str) and excel_cell.value.startswith("="):
                         model_cell.formula = excel_cell.value
                         model_cell.value = value_cell.value if value_cell is not None else None
@@ -105,6 +118,8 @@ class WorkbookFileConverter:
                     if formatting:
                         model_cell.formatting = formatting
 
+            imported_sheet.metadata["ooxml_imported_addresses"] = imported_addresses
+
         if not workbook.sheets:
             workbook.add_sheet("Sheet1")
         workbook.active_sheet_index = 0
@@ -114,20 +129,41 @@ class WorkbookFileConverter:
         """Export app workbook model data to `.xlsx`."""
         file_path = Path(path)
         try:
-            target = OpenPyxlWorkbook()
-            default_sheet = target.active
-            target.remove(default_sheet)
+            target = self.ooxml_layer.open_template(workbook.metadata)
+            using_template = target is not None
+            if target is None:
+                target = OpenPyxlWorkbook()
+                default_sheet = target.active
+                target.remove(default_sheet)
 
             existing_names: set[str] = set()
             existing_table_names: set[str] = set()
+            retained_sheets = {
+                str(sheet.metadata.get("ooxml_original_title") or sheet.name)
+                for sheet in workbook.sheets
+            }
+            if using_template:
+                for existing_sheet in list(target.worksheets):
+                    if existing_sheet.title not in retained_sheets:
+                        target.remove(existing_sheet)
             for sheet in workbook.sheets:
                 sheet_name = self._make_unique_sheet_name(sheet.name or "Sheet", existing_names)
                 existing_names.add(sheet_name)
-                target_sheet = target.create_sheet(title=sheet_name)
+                original_title = str(sheet.metadata.get("ooxml_original_title") or "")
+                if using_template and original_title in target.sheetnames:
+                    target_sheet = target[original_title]
+                    target_sheet.title = sheet_name
+                    for address in sheet.metadata.get("ooxml_imported_addresses", []):
+                        if address not in sheet.cells:
+                            target_sheet[str(address)].value = None
+                else:
+                    target_sheet = target.create_sheet(title=sheet_name)
 
                 freeze_panes = sheet.metadata.get("freeze_panes")
                 if freeze_panes:
                     target_sheet.freeze_panes = freeze_panes
+                for merged_range in list(target_sheet.merged_cells.ranges):
+                    target_sheet.unmerge_cells(str(merged_range))
                 for merged_range in sheet.metadata.get("merged_ranges", []):
                     target_sheet.merge_cells(str(merged_range))
                 if sheet.metadata.get("auto_filter"):
@@ -145,6 +181,8 @@ class WorkbookFileConverter:
                         target_cell.value = cell.value
                     self._apply_formatting(target_cell, cell.formatting)
 
+                for existing_table in list(target_sheet.tables):
+                    del target_sheet.tables[existing_table]
                 for table_data in sheet.metadata.get("tables", []):
                     if not isinstance(table_data, dict) or not table_data.get("ref"):
                         continue
@@ -162,6 +200,7 @@ class WorkbookFileConverter:
                     table.totalsRowShown = bool(table_data.get("totals_row_shown", False))
                     target_sheet.add_table(table)
 
+                target_sheet.data_validations.dataValidation = []
                 for validation_data in sheet.metadata.get("data_validations", []):
                     if not isinstance(validation_data, dict) or not validation_data.get("sqref"):
                         continue

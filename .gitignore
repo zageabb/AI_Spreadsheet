@@ -26,3 +26,6 @@ htmlcov/
 # Local identity data
 data/users.json
 data/users.json.tmp
+
+# Locally authored custom spreadsheet functions
+plugins/user/
