@@ -1,5 +1,7 @@
 from datetime import date
 
+import pytest
+
 from app.engine.calculation_service import WorkbookCalculationService
 from app.engine.formula_engine import FormulaEngine
 from app.formulas.registry import register_builtin_functions
@@ -97,3 +99,27 @@ def test_filter_sort_unique_and_structured_table_references():
     assert [[summary.get_cell(f"{column}{row}").value for column in "GH"] for row in (1, 2)] == [
         ["B", 20], ["B", 20]
     ]
+
+
+def test_named_ranges_participate_in_calculation_and_dependencies():
+    workbook,data,summary,service=_workbook_service()
+    for row,value in enumerate((10,20,30),1):data.get_cell(f"B{row}").value=value
+    workbook.metadata["defined_names"]=[{"name":"SalesValues","refers_to":"=Data!$B$1:$B$3","scope":None}]
+    summary.get_cell("A1").formula="=SUM(SalesValues)"
+    service.recalculate()
+    assert summary.get_cell("A1").value==60.0
+    data.get_cell("B2").value=25
+    service.recalculate({service.cell_key("Data","B2")})
+    assert summary.get_cell("A1").value==65.0
+
+
+def test_phase_13_statistical_rounding_text_and_date_functions():
+    engine=_engine()
+    assert engine.evaluate("=MEDIAN(1,8,3)")==3.0
+    assert engine.evaluate("=STDEV.S(2,4,4,4,5,5,7,9)")==pytest.approx(2.138089935)
+    assert engine.evaluate("=LARGE(SEQUENCE(3),2)")==2.0
+    assert engine.evaluate("=ROUNDUP(1.231,2)")==1.24
+    assert engine.evaluate("=ROUNDDOWN(-1.239,2)")==-1.23
+    assert engine.evaluate('=SEARCH("B","abc")')==2.0
+    assert engine.evaluate('=REPLACE("abcdef",2,3,"X")')=="aXef"
+    assert engine.evaluate("=WEEKDAY(DATE(2026,8,27),2)")==4.0

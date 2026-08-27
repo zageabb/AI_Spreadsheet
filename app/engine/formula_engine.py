@@ -88,6 +88,19 @@ class FormulaEngine:
             return set()
         return {token.value for token in _tokenize(formula.lstrip("=")) if token.kind == "STRUCTREF"}
 
+    @staticmethod
+    def extract_named_references(formula: str) -> set[str]:
+        """Return bare identifiers that may refer to workbook-defined names."""
+        if not isinstance(formula, str):
+            return set()
+        tokens = _tokenize(formula.lstrip("="))
+        return {
+            token.value for index, token in enumerate(tokens)
+            if token.kind == "IDENT"
+            and token.value.upper() not in {"TRUE", "FALSE"}
+            and (index + 1 >= len(tokens) or tokens[index + 1].kind != "LPAREN")
+        }
+
     def evaluate(self, raw_value: Any, context: dict[str, Any] | None = None) -> Any:
         """Evaluate a value if it is a formula.
 
@@ -197,7 +210,15 @@ class _Parser:
                 return self._parse_function_call(ident)
             if ident.upper() in {"TRUE", "FALSE"}:
                 return ident.upper() == "TRUE"
-            raise FormulaEvaluationError("#NAME?", ident)
+            resolver = self.context.get("get_named_value")
+            if resolver is None:
+                raise FormulaEvaluationError("#NAME?", ident)
+            try:
+                return resolver(ident)
+            except FormulaEvaluationError:
+                raise
+            except Exception as exc:
+                raise FormulaEvaluationError("#NAME?", ident) from exc
 
         raise FormulaEvaluationError("#PARSE!", f"Unexpected token: {token.kind}")
 
@@ -410,7 +431,7 @@ def _tokenize(expression: str) -> list[Token]:
         ("COLON", r":"),
         ("LPAREN", r"\("),
         ("RPAREN", r"\)"),
-        ("IDENT", r"[A-Za-z_][A-Za-z0-9_]*"),
+        ("IDENT", r"[A-Za-z_][A-Za-z0-9_.]*"),
     ]
 
     pattern = "|".join(f"(?P<{name}>{regex})" for name, regex in token_specs)

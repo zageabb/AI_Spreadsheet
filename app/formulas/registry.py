@@ -33,3 +33,5 @@ def register_builtin_functions(engine: FormulaEngine) -> None:
         module = import_module(module_path)
         for name, fn in _iter_uppercase_functions(module):
             engine.register_function(name, fn)
+            if "_" in name:
+                engine.register_function(name.replace("_", "."), fn)

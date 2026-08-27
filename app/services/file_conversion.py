@@ -12,10 +12,14 @@ from typing import Any
 
 from openpyxl import Workbook as OpenPyxlWorkbook
 from openpyxl import load_workbook
+from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+from openpyxl.formatting.formatting import ConditionalFormattingList
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 
 from app.models.workbook import Workbook
 from app.services.ooxml_preservation import (
@@ -47,6 +51,19 @@ class WorkbookFileConverter:
 
         workbook = Workbook(name=file_path.stem or "Imported Workbook")
         workbook.sheets = []
+        workbook.metadata["defined_names"] = [
+            {
+                "name": name,
+                "refers_to": defined.attr_text,
+                "scope": None,
+            }
+            for name, defined in formulas_wb.defined_names.items()
+            if defined.attr_text and not defined.hidden
+        ]
+        for source_sheet in formulas_wb.worksheets:
+            workbook.metadata["defined_names"].extend({
+                "name": name, "refers_to": defined.attr_text, "scope": source_sheet.title,
+            } for name,defined in source_sheet.defined_names.items() if defined.attr_text and not defined.hidden)
         try:
             workbook.metadata[OOXML_METADATA_KEY] = self.ooxml_layer.capture(file_path)
         except OOXMLPreservationError as exc:
@@ -89,6 +106,7 @@ class WorkbookFileConverter:
                 }
                 for validation in source_sheet.data_validations.dataValidation
             ]
+            imported_sheet.metadata["conditional_formats"] = self._extract_conditional_formats(source_sheet)
             value_sheet = values_wb.worksheets[sheet_index] if sheet_index < len(values_wb.worksheets) else None
 
             max_row = source_sheet.max_row or 0
@@ -138,6 +156,7 @@ class WorkbookFileConverter:
 
             existing_names: set[str] = set()
             existing_table_names: set[str] = set()
+            exported_sheet_names: dict[str, str] = {}
             retained_sheets = {
                 str(sheet.metadata.get("ooxml_original_title") or sheet.name)
                 for sheet in workbook.sheets
@@ -149,6 +168,7 @@ class WorkbookFileConverter:
             for sheet in workbook.sheets:
                 sheet_name = self._make_unique_sheet_name(sheet.name or "Sheet", existing_names)
                 existing_names.add(sheet_name)
+                exported_sheet_names[sheet.name] = sheet_name
                 original_title = str(sheet.metadata.get("ooxml_original_title") or "")
                 if using_template and original_title in target.sheetnames:
                     target_sheet = target[original_title]
@@ -217,8 +237,39 @@ class WorkbookFileConverter:
                     target_sheet.add_data_validation(validation)
                     validation.add(str(validation_data["sqref"]))
 
+                if not using_template:
+                    target_sheet.conditional_formatting = ConditionalFormattingList()
+                for rule_data in sheet.metadata.get("conditional_formats", []):
+                    if using_template and isinstance(rule_data, dict) and rule_data.get("source") == "imported":
+                        continue
+                    self._add_conditional_format(target_sheet, rule_data)
+
+                for chart_data in sheet.metadata.get("charts", []):
+                    self._add_chart(target_sheet, chart_data)
+
             if not workbook.sheets:
                 target.create_sheet(title="Sheet1")
+
+            if using_template:
+                for existing_name, existing_definition in list(target.defined_names.items()):
+                    if not existing_definition.hidden:
+                        target.defined_names.pop(existing_name, None)
+                for target_sheet in target.worksheets:
+                    for existing_name,existing_definition in list(target_sheet.defined_names.items()):
+                        if not existing_definition.hidden:target_sheet.defined_names.pop(existing_name,None)
+            else:
+                target.defined_names.clear()
+            for item in workbook.metadata.get("defined_names", []):
+                if not isinstance(item, dict) or not item.get("name") or not item.get("refers_to"):
+                    continue
+                scope = item.get("scope")
+                exported_scope = exported_sheet_names.get(str(scope),str(scope)) if scope else None
+                local_id = target.sheetnames.index(exported_scope) if exported_scope in target.sheetnames else None
+                target.defined_names.add(DefinedName(
+                    str(item["name"]),
+                    attr_text=self._rewrite_defined_name_reference(str(item["refers_to"]).lstrip("="),exported_sheet_names),
+                    localSheetId=local_id,
+                ))
 
             target.save(file_path)
         except Exception as exc:  # pragma: no cover - defensive wrapper
@@ -328,6 +379,75 @@ class WorkbookFileConverter:
                 formatting["wrap_text"] = True
 
         return formatting
+
+    @staticmethod
+    def _extract_conditional_formats(source_sheet) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for conditional in source_sheet.conditional_formatting:
+            for rule in conditional.rules:
+                data: dict[str, Any] = {
+                    "range": str(conditional.sqref), "type": rule.type,
+                    "operator": rule.operator, "formula": list(rule.formula or []),
+                    "source": "imported",
+                }
+                dxf = rule.dxf
+                if dxf and dxf.fill and dxf.fill.fill_type == "solid":
+                    data["fill_color"] = getattr(dxf.fill.fgColor, "rgb", None)
+                if dxf and dxf.font:
+                    data["font_color"] = getattr(dxf.font.color, "rgb", None) if dxf.font.color else None
+                    data["bold"] = bool(dxf.font.bold)
+                result.append(data)
+        return result
+
+    @staticmethod
+    def _add_conditional_format(target_sheet, data: dict[str, Any]) -> None:
+        if not isinstance(data, dict) or not data.get("range"):
+            return
+        fill_color = data.get("fill_color")
+        font_color = data.get("font_color")
+        fill = PatternFill(fill_type="solid", fgColor=str(fill_color)) if fill_color else None
+        font = Font(color=str(font_color) if font_color else None, bold=bool(data.get("bold")))
+        formulas = [str(item) for item in data.get("formula", [])]
+        if data.get("type") == "cellIs" and data.get("operator") and formulas:
+            rule = CellIsRule(operator=str(data["operator"]), formula=formulas, fill=fill, font=font)
+        elif formulas:
+            rule = FormulaRule(formula=formulas, fill=fill, font=font)
+        else:
+            return
+        target_sheet.conditional_formatting.add(str(data["range"]), rule)
+
+    @staticmethod
+    def _add_chart(target_sheet, data: dict[str, Any]) -> None:
+        if not isinstance(data, dict) or not data.get("range"):
+            return
+        min_col,min_row,max_col,max_row=range_boundaries(str(data["range"]))
+        if max_row<=min_row or max_col<min_col:
+            return
+        chart_type=str(data.get("type") or "column").lower()
+        chart={"column":BarChart,"bar":BarChart,"line":LineChart,"pie":PieChart}.get(chart_type,BarChart)()
+        chart.title=str(data.get("title") or "Chart")
+        if chart_type=="pie":
+            data_col=min(min_col+1,max_col)
+            chart.add_data(Reference(target_sheet,min_col=data_col,min_row=min_row,max_row=max_row),titles_from_data=True)
+        else:
+            chart.add_data(Reference(target_sheet,min_col=min_col+1,min_row=min_row,max_col=max_col,max_row=max_row),titles_from_data=True)
+        chart.set_categories(Reference(target_sheet,min_col=min_col,min_row=min_row+1,max_row=max_row))
+        anchor=str(data.get("anchor") or f"{get_column_letter(max_col+2)}{min_row}")
+        for existing in list(target_sheet._charts):
+            marker=getattr(existing,"anchor",None)
+            if hasattr(marker,"_from") and marker._from.col+1==range_boundaries(f"{anchor}:{anchor}")[0] and marker._from.row+1==range_boundaries(f"{anchor}:{anchor}")[1]:
+                target_sheet._charts.remove(existing)
+        target_sheet.add_chart(chart,anchor)
+
+    @staticmethod
+    def _rewrite_defined_name_reference(reference: str, sheet_names: dict[str,str]) -> str:
+        result=reference
+        for original,exported in sheet_names.items():
+            old_quoted="'"+original.replace("'","''")+"'!"
+            new_quoted="'"+exported.replace("'","''")+"'!"
+            result=result.replace(old_quoted,new_quoted)
+            if " " not in original:result=result.replace(original+"!",new_quoted if " " in exported else exported+"!")
+        return result
 
     @staticmethod
     def _apply_formatting(target_cell, formatting: dict[str, Any]) -> None:

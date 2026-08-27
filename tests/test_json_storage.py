@@ -33,7 +33,7 @@ def test_save_and_load_roundtrip(tmp_path):
 
     assert loaded.name == "Finance Q1"
     assert loaded.metadata["owner"] == "ana@example.com"
-    assert loaded.metadata["schema_version"] == "1.1"
+    assert loaded.metadata["schema_version"] == "1.2"
     assert loaded.permissions["owner"] == "ana@example.com"
     assert loaded.sheets[0].cells["A1"].formatting["number_format"] == "currency"
     assert loaded.sheets[0].cells["B1"].formula == "=A1*0.1"

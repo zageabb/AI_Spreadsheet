@@ -9,7 +9,7 @@ from typing import Any
 from app.models.sheet import Worksheet
 
 
-WORKBOOK_SCHEMA_VERSION = "1.1"
+WORKBOOK_SCHEMA_VERSION = "1.2"
 DEFAULT_PERMISSIONS = {
     "owner": None,
     "shared_with": [],

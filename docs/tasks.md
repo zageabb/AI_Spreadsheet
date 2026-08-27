@@ -67,6 +67,16 @@
 - [x] F2, Ctrl+Home, Ctrl+End and standard editing shortcuts
 - [x] Read-only permission enforcement and regression tests
 
+## Phase 13 — Advanced Excel compatibility
+- [x] Workbook and worksheet-scoped named-range management
+- [x] Named ranges in formula evaluation and dependency recalculation
+- [x] Conditional-format creation, clearing and desktop rendering
+- [x] Conditional-format and defined-name XLSX round trips
+- [x] Native column, line and pie chart creation for XLSX export
+- [x] Preserve unsupported imported OOXML rules and drawing parts
+- [x] Statistical, rounding, text-search and working-day formulas
+- [x] Compatibility documentation and regression tests
+
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure
 - [ ] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`

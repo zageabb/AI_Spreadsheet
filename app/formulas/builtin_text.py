@@ -65,3 +65,23 @@ def TEXTJOIN(delimiter: Any, ignore_empty: Any, *parts: Any) -> str:  # noqa: N8
     if bool(ignore_empty):
         values = [value for value in values if value not in (None, "")]
     return str(delimiter).join("" if value is None else str(value) for value in values)
+
+
+def FIND(find_text: Any, within_text: Any, start_num: Any = 1) -> float:  # noqa: N802
+    start=max(0,int(float(start_num))-1)
+    position=str(within_text).find(str(find_text),start)
+    if position<0:raise ValueError("#VALUE!")
+    return float(position+1)
+
+
+def SEARCH(find_text: Any, within_text: Any, start_num: Any = 1) -> float:  # noqa: N802
+    return FIND(str(find_text).casefold(),str(within_text).casefold(),start_num)
+
+
+def REPLACE(old_text: Any, start_num: Any, num_chars: Any, new_text: Any) -> str:  # noqa: N802
+    source=str(old_text); start=max(0,int(float(start_num))-1); size=max(0,int(float(num_chars)))
+    return source[:start]+str(new_text)+source[start+size:]
+
+
+def VALUE(text: Any) -> float:  # noqa: N802
+    return float(str(text).replace(",","").strip())

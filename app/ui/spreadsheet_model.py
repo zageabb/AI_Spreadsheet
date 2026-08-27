@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont
 
 from app.core.coordinates import CellAddress, column_index_to_label
 from app.models.sheet import Worksheet
+from app.services.conditional_formatting import formatting_for
 from app.services.worksheet_editing import snapshot
 
 
@@ -46,6 +47,7 @@ class SpreadsheetTableModel(QAbstractTableModel):
         cell = self.worksheet.cells.get(self.address(index))
         if cell is None:
             return None
+        conditional = formatting_for(self.worksheet, self.address(index), cell.value)
         if role == Qt.ItemDataRole.DisplayRole:
             return "" if cell.value is None else str(cell.value)
         if role == Qt.ItemDataRole.EditRole:
@@ -53,13 +55,13 @@ class SpreadsheetTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             align = cell.formatting.get("horizontal_align")
             return {"center": Qt.AlignmentFlag.AlignCenter, "right": Qt.AlignmentFlag.AlignRight}.get(align)
-        if role == Qt.ItemDataRole.BackgroundRole and cell.formatting.get("fill_color"):
-            return QColor("#" + str(cell.formatting["fill_color"])[-6:])
-        if role == Qt.ItemDataRole.ForegroundRole and cell.formatting.get("font_color"):
-            return QColor("#" + str(cell.formatting["font_color"])[-6:])
+        if role == Qt.ItemDataRole.BackgroundRole and (conditional.get("fill_color") or cell.formatting.get("fill_color")):
+            return QColor("#" + str(conditional.get("fill_color") or cell.formatting["fill_color"])[-6:])
+        if role == Qt.ItemDataRole.ForegroundRole and (conditional.get("font_color") or cell.formatting.get("font_color")):
+            return QColor("#" + str(conditional.get("font_color") or cell.formatting["font_color"])[-6:])
         if role == Qt.ItemDataRole.FontRole:
             font = QFont()
-            font.setBold(bool(cell.formatting.get("bold")))
+            font.setBold(bool(conditional.get("bold",cell.formatting.get("bold"))))
             font.setItalic(bool(cell.formatting.get("italic")))
             font.setUnderline(bool(cell.formatting.get("underline")))
             return font

@@ -32,4 +32,4 @@ def test_to_dict_includes_schema_version() -> None:
     workbook = Workbook(name="Schema")
     payload = workbook.to_dict()
 
-    assert payload["metadata"]["schema_version"] == "1.1"
+    assert payload["metadata"]["schema_version"] == "1.2"

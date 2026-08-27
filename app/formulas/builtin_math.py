@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from math import floor, isfinite, sqrt
+from math import ceil, floor, isfinite, sqrt
 from typing import Any
 
 from app.engine.formula_engine import flatten_args
@@ -91,6 +91,28 @@ def SQRT(number: Any) -> float:  # noqa: N802
     if value < 0:
         raise ValueError("#NUM!")
     return float(sqrt(value))
+
+
+def ROUNDUP(number: Any, digits: Any = 0) -> float:  # noqa: N802
+    value=_to_number(number); places=int(_to_number(digits)); factor=10**places
+    return float((ceil(abs(value)*factor)/factor) * (-1 if value<0 else 1))
+
+
+def ROUNDDOWN(number: Any, digits: Any = 0) -> float:  # noqa: N802
+    value=_to_number(number); places=int(_to_number(digits)); factor=10**places
+    return float((floor(abs(value)*factor)/factor) * (-1 if value<0 else 1))
+
+
+def CEILING(number: Any, significance: Any = 1) -> float:  # noqa: N802
+    value=_to_number(number); step=abs(_to_number(significance))
+    if step==0:return 0.0
+    return float(ceil(value/step)*step)
+
+
+def FLOOR(number: Any, significance: Any = 1) -> float:  # noqa: N802
+    value=_to_number(number); step=abs(_to_number(significance))
+    if step==0:return 0.0
+    return float(floor(value/step)*step)
 
 
 def SUMPRODUCT(*arrays: Any) -> float:  # noqa: N802

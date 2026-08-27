@@ -42,7 +42,8 @@ from app.ui.sharing_dialog import SharingDialog
 from app.ui.custom_function_dialog import CustomFunctionDialog
 from app.ui.ai_assistant_dock import AIAssistantDock
 from app.ui.find_replace_dialog import FindReplaceDialog
-from app.ui.undo_commands import WorksheetStateCommand
+from app.ui.undo_commands import WorkbookMetadataCommand, WorksheetStateCommand
+from app.ui.excel_features_dialogs import ChartDialog, ConditionalFormatDialog, NamedRangesDialog
 
 
 class CollaborationBridge(QObject):
@@ -113,6 +114,10 @@ class MainWindow(QMainWindow):
         self.underline_a=self._make_action("Underline","Ctrl+U",lambda:self._toggle_format("underline")); self.underline_a.setCheckable(True)
         self.fill_a=self._make_action("Fill Colour",None,lambda:self._choose_colour("fill_color"))
         self.font_colour_a=self._make_action("Font Colour",None,lambda:self._choose_colour("font_color"))
+        self.conditional_format_a=self._make_action("Conditional Formatting",None,self._conditional_format)
+        self.clear_conditional_a=self._make_action("Clear Conditional Formatting",None,self._clear_conditional_formats)
+        self.named_ranges_a=self._make_action("Named Ranges","Ctrl+F3",self._named_ranges)
+        self.chart_a=self._make_action("Create Chart","Alt+F1",self._create_chart)
         self.transform_a=self._make_action("Transform Data","Ctrl+Shift+T",self._transform_data)
         self.connect_csv_a=self._make_action("Connect CSV",None,self._connect_csv)
         self.connect_sqlite_a=self._make_action("Connect SQLite",None,self._connect_sqlite)
@@ -126,9 +131,9 @@ class MainWindow(QMainWindow):
     def _chrome(self):
         file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a]); self.recent_menu=file_menu.addMenu("Open Recent"); self._refresh_recent_menu(); file_menu.addActions([self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out]); file_menu.addSeparator(); file_menu.addAction(self.sign_out_a)
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.undo_a,self.redo_a]); edit_menu.addSeparator(); edit_menu.addActions([self.copy_a,self.paste_a,self.clear_a,self.find_a,self.edit_cell_a]); edit_menu.addSeparator(); edit_menu.addActions([self.first_cell_a,self.last_cell_a])
-        format_menu=self.menuBar().addMenu("Format"); format_menu.addActions([self.bold_a,self.italic_a,self.underline_a,self.fill_a,self.font_colour_a])
+        format_menu=self.menuBar().addMenu("Format"); format_menu.addActions([self.bold_a,self.italic_a,self.underline_a,self.fill_a,self.font_colour_a]); format_menu.addSeparator(); format_menu.addActions([self.conditional_format_a,self.clear_conditional_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a]); sheet_menu.addSeparator(); sheet_menu.addActions([self.insert_rows_a,self.delete_rows_a,self.insert_columns_a,self.delete_columns_a])
-        data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.sort_asc_a,self.sort_desc_a,self.filter_a,self.clear_filter_a]); data_menu.addSeparator(); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
+        data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.sort_asc_a,self.sort_desc_a,self.filter_a,self.clear_filter_a]); data_menu.addSeparator(); data_menu.addActions([self.named_ranges_a,self.chart_a]); data_menu.addSeparator(); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
         access_menu=self.menuBar().addMenu("Access"); access_menu.addAction(self.share_a)
         tools_menu=self.menuBar().addMenu("Tools"); tools_menu.addActions([self.ai_a,self.custom_functions_a])
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -243,6 +248,48 @@ class MainWindow(QMainWindow):
         if not selected:return
         formats={"General":None,"Number":"0.00","Currency":"£#,##0.00","Percentage":"0.00%","Date":"dd/mm/yyyy"}
         self._record_operation("Change number format",lambda sheet:apply_format(sheet,selected,{"number_format":formats[label]}))
+
+    def _conditional_format(self):
+        selected=self._selected_range()
+        if not selected:return
+        range_ref=self._range_ref(selected)
+        dialog=ConditionalFormatDialog(range_ref,self)
+        if not dialog.exec():return
+        rule=dialog.rule()
+        self._record_operation("Add conditional format",lambda sheet:sheet.metadata.setdefault("conditional_formats",[]).append(rule))
+
+    def _clear_conditional_formats(self):
+        sheet=self.workbook.get_active_sheet()
+        if not sheet.metadata.get("conditional_formats"):return
+        answer=QMessageBox.question(self,"Clear conditional formatting","Remove all conditional-format rules from this sheet?")
+        if answer==QMessageBox.StandardButton.Yes:self._record_operation("Clear conditional formats",lambda target:target.metadata.pop("conditional_formats",None))
+
+    def _named_ranges(self):
+        selected=self._selected_range(); sheet=self.workbook.get_active_sheet()
+        reference=f"'{sheet.name.replace(chr(39),chr(39)*2)}'!{self._range_ref(selected)}" if selected else f"'{sheet.name}'!A1"
+        before=dict(self.workbook.metadata)
+        dialog=NamedRangesDialog(self.workbook.metadata.get("defined_names",[]),reference,[item.name for item in self.workbook.sheets],self)
+        if not dialog.exec():return
+        from copy import deepcopy
+        before=deepcopy(before); self.workbook.metadata["defined_names"]=dialog.names; after=deepcopy(self.workbook.metadata)
+        if before==after:return
+        self.undo_stack.push(WorkbookMetadataCommand("Edit named ranges",self.workbook,before,after,self._refresh_after_undo)); self._refresh_after_undo()
+
+    def _create_chart(self):
+        selected=self._selected_range()
+        if not selected or selected.bottom<=selected.top or selected.right<=selected.left:
+            QMessageBox.information(self,"Create chart","Select headers plus at least one category and value column."); return
+        range_ref=self._range_ref(selected); anchor=CellAddress(selected.top,selected.right+2).a1(False)
+        dialog=ChartDialog(range_ref,anchor,self)
+        if not dialog.exec():return
+        chart=dialog.chart()
+        self._record_operation("Create chart",lambda sheet:sheet.metadata.setdefault("charts",[]).append(chart))
+        self.statusBar().showMessage("Chart added; export to Excel to view it",3500)
+
+    @staticmethod
+    def _range_ref(selected):
+        start=CellAddress(selected.top,selected.left).a1(False); end=CellAddress(selected.bottom,selected.right).a1(False)
+        return start if start==end else f"{start}:{end}"
 
     def _change_rows(self,inserting):
         selected=self._selected_range()
@@ -524,7 +571,8 @@ class MainWindow(QMainWindow):
         for action in [self.save_a,self.saveas_a,self.add_a,self.rename_a,self.delete_a,self.paste_a,self.clear_a,
                        self.insert_rows_a,self.delete_rows_a,self.insert_columns_a,self.delete_columns_a,
                        self.sort_asc_a,self.sort_desc_a,self.bold_a,self.italic_a,self.underline_a,self.fill_a,
-                       self.font_colour_a,self.transform_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]:action.setEnabled(editable)
+                       self.font_colour_a,self.conditional_format_a,self.clear_conditional_a,self.named_ranges_a,self.chart_a,
+                       self.transform_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]:action.setEnabled(editable)
         self.undo_a.setEnabled(editable and self.undo_stack.canUndo()); self.redo_a.setEnabled(editable and self.undo_stack.canRedo())
         self.share_a.setEnabled(self.access_role=="owner")
         self.formula_bar.setReadOnly(not editable)

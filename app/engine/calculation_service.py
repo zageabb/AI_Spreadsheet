@@ -75,6 +75,7 @@ class WorkbookCalculationService:
             "get_cell_value": lambda reference: self._value(reference, current_sheet),
             "get_range_values": lambda start, end: self._range_values(start, end, current_sheet),
             "get_structured_values": lambda reference: self._structured_values(reference),
+            "get_named_value": lambda name: self._named_value(name, current_sheet),
         }
         return self.engine.evaluate(formula, context)
 
@@ -91,7 +92,36 @@ class WorkbookCalculationService:
         for reference in self.engine.extract_structured_references(formula):
             sheet_name, start, end = self._structured_range(reference)
             dependencies.update(self._range_keys(start, end, sheet_name))
+        for name in self.engine.extract_named_references(formula):
+            try:
+                sheet_name, start, end = self._named_range(name, current_sheet)
+            except KeyError:
+                continue
+            dependencies.update(self._range_keys(start, end, sheet_name))
         return dependencies
+
+    def _named_value(self, name: str, current_sheet: str):
+        sheet_name, start, end = self._named_range(name, current_sheet)
+        if start == end:
+            return self._value(f"'{sheet_name}'!{start}", current_sheet)
+        return self._range_values(f"'{sheet_name}'!{start}", f"'{sheet_name}'!{end}", current_sheet)
+
+    def _named_range(self, name: str, current_sheet: str) -> tuple[str, str, str]:
+        names = self.workbook.metadata.get("defined_names", [])
+        candidates = [item for item in names if isinstance(item, dict) and str(item.get("name", "")).casefold() == name.casefold()]
+        scoped = next((item for item in candidates if item.get("scope") == current_sheet), None)
+        item = scoped or next((item for item in candidates if not item.get("scope")), None)
+        if item is None:
+            raise KeyError(name)
+        reference = str(item.get("refers_to") or "").lstrip("=")
+        if ":" in reference:
+            start_text, end_text = reference.split(":", 1)
+        else:
+            start_text = end_text = reference
+        first = CellAddress.parse(start_text)
+        second = CellAddress.parse(end_text)
+        sheet_name = first.sheet or str(item.get("scope") or current_sheet)
+        return sheet_name, first.a1(False), second.a1(False)
 
     def _clear_previous_spills(self) -> None:
         for keys in self._spill_cells.values():

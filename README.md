@@ -289,11 +289,15 @@ Use **Tools → Custom Python Functions** to write an uppercase function such as
 
 Dirty editable workbooks receive timed local recovery snapshots without overwriting their primary JSON or PostgreSQL record. Recovery is scoped to the signed-in identity and offered at the next startup. The desktop also prompts before closing with unsaved changes, shows recovery state in the status bar, and provides **File → Open Recent** for local JSON workbooks.
 
-Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.12.0-rc1`.
+Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.13.0-rc1`.
 
 ## Editing essentials
 
 Phase 12 adds workbook-scoped undo/redo, modeless find and replace, clear/insert/delete operations, formula-aware row and column changes, range sorting, non-destructive row filtering and common cell formatting controls. See [`docs/editing_essentials.md`](docs/editing_essentials.md) for behaviour and shortcuts.
+
+## Advanced Excel compatibility
+
+Phase 13 adds calculated named ranges, desktop-rendered conditional formatting, native column/line/pie chart creation for XLSX, and statistical, rounding, text-search and working-day formulas. Imported objects outside the editable subset continue through the verified OOXML preservation layer. See [`docs/excel_compatibility_phase13.md`](docs/excel_compatibility_phase13.md).
 
 ## Grounded AI assistant
 

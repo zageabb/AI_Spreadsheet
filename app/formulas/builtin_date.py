@@ -60,3 +60,24 @@ def EOMONTH(start_date: Any, months: Any) -> date:  # noqa: N802
 
 def DAYS(end_date: Any, start_date: Any) -> float:  # noqa: N802
     return float((_date(end_date) - _date(start_date)).days)
+
+
+def WEEKDAY(value: Any, return_type: Any = 1) -> float:  # noqa: N802
+    weekday=_date(value).weekday(); mode=int(float(return_type))
+    if mode==2:return float(weekday+1)
+    return float((weekday+1)%7+1)
+
+
+def NETWORKDAYS(start_date: Any, end_date: Any, holidays: Any = None) -> float:  # noqa: N802
+    start,end=_date(start_date),_date(end_date); holiday_dates=set()
+    values=holidays if isinstance(holidays,(list,tuple)) else [holidays] if holidays is not None else []
+    for item in values:
+        if isinstance(item,(list,tuple)):
+            for nested in item:holiday_dates.add(_date(nested))
+        else:holiday_dates.add(_date(item))
+    direction=1 if end>=start else -1; current=start; count=0
+    while True:
+        if current.weekday()<5 and current not in holiday_dates:count+=direction
+        if current==end:break
+        current+=timedelta(days=direction)
+    return float(count)
