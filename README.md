@@ -284,6 +284,12 @@ XLSX import/export now round-trips Excel tables, table styles, and data-validati
 
 Use **Tools → Custom Python Functions** to write an uppercase function such as `DOUBLE(value)`, validate it, save it locally, and use it immediately as `=DOUBLE(A1)`. The editor blocks imports, file/network/process access, dynamic execution and private attribute access while exposing calculation-oriented built-ins plus `math` and `statistics`. User modules are stored in `CUSTOM_FUNCTIONS_DIR` (`plugins/user` by default) and reloaded at startup. Custom code runs locally, so only save functions you understand.
 
+## Desktop recovery and release candidate
+
+Dirty editable workbooks receive timed local recovery snapshots without overwriting their primary JSON or PostgreSQL record. Recovery is scoped to the signed-in identity and offered at the next startup. The desktop also prompts before closing with unsaved changes, shows recovery state in the status bar, and provides **File → Open Recent** for local JSON workbooks.
+
+Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.10.0-rc1`.
+
 
 ## Controlled live collaboration
 

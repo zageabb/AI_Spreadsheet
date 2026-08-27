@@ -29,13 +29,23 @@
 - [x] XLSX table and data-validation round trips
 - [x] Regression tests and compatibility documentation
 
-## Milestone 10 — Extensibility and OOXML preservation
+## Post-Phase 9 — Extensibility and OOXML preservation
 - [x] Verified, size-limited OOXML package snapshots
 - [x] Template-based Excel export preserving charts and drawings
 - [x] Context Studio-styled custom Python function editor
 - [x] Validated local function persistence and immediate registration
 - [x] Startup discovery for user-authored function modules
 - [x] Security, round-trip and regression tests
+
+## Phase 10 — Desktop release candidate
+- [x] Timed local autosave snapshots without overwriting primary storage
+- [x] Identity-scoped startup recovery and snapshot cleanup
+- [x] Unsaved-change close confirmation
+- [x] Recent local workbook menu
+- [x] Recovery status in the Context Studio status bar
+- [x] PyInstaller configuration and reproducible checksum build script
+- [x] Windows, macOS and Ubuntu GitHub Actions build matrix
+- [x] Release documentation and regression tests
 
 ## Milestone 1 — MVP desktop spreadsheet
 - [ ] Bootstrap repository structure

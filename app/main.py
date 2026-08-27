@@ -11,12 +11,16 @@ from app.auth.service import create_auth_service
 from app.ui.auth_dialog import LoginDialog
 from app.ui.main_window import MainWindow
 from app.ui.theme import CONTEXT_STUDIO_QSS
+from app.version import __version__
 
 
 def main() -> int:
     """Launch the PySide6 desktop application."""
     load_dotenv()
     app = QApplication(sys.argv)
+    app.setApplicationName("AI Spreadsheet")
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName("AI Spreadsheet")
     app.setStyleSheet(CONTEXT_STUDIO_QSS)
     try:
         auth_service = create_auth_service()

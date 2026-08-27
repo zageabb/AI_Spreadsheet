@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, QTimer, Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton, QStatusBar,
@@ -24,6 +24,7 @@ from app.services.collaboration_client import (CollaborationConflict,
 from app.services.data_connectors import DataConnectorError, DataConnectorService, DataSourceSpec
 from app.services.transformations import (TransformationPipeline, rows_to_worksheet,
     worksheet_to_rows)
+from app.services.recovery import RecoveryManager, autosave_enabled, autosave_interval_seconds
 from app.storage import get_workbook_storage
 from app.storage.postgres_storage import PostgresStorageError, PostgresWorkbookStorage
 from app.ui.spreadsheet_model import SpreadsheetTableModel
@@ -52,11 +53,14 @@ class MainWindow(QMainWindow):
         self.resize(1400, 860); self.setStyleSheet(CONTEXT_STUDIO_QSS)
         self.storage, self.converter = get_workbook_storage(), WorkbookFileConverter()
         self.connectors = DataConnectorService()
+        self.recovery = RecoveryManager()
         self.engine = FormulaEngine(); register_builtin_functions(self.engine); PluginLoader().load(self.engine)
         self.workbook = self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1")
         self.calculation = WorkbookCalculationService(self.workbook, self.engine)
         self.current_file_path: str | None = None; self.dirty = False; self.access_role = "owner"
-        self._actions(); self._chrome(); self._tabs(); self._title()
+        self.last_recovery_path: Path | None = None
+        self._actions(); self._chrome(); self._tabs(); self._title(); self._start_autosave()
+        QTimer.singleShot(0,self._offer_recovery)
 
     def _make_action(self, label, shortcut, callback):
         action = QAction(label, self)
@@ -86,7 +90,7 @@ class MainWindow(QMainWindow):
         self.sign_out_a=self._make_action("Sign Out",None,self.close)
 
     def _chrome(self):
-        file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a,self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out]); file_menu.addSeparator(); file_menu.addAction(self.sign_out_a)
+        file_menu=self.menuBar().addMenu("File"); file_menu.addActions([self.new_a,self.open_a]); self.recent_menu=file_menu.addMenu("Open Recent"); self._refresh_recent_menu(); file_menu.addActions([self.save_a,self.saveas_a,self.xlsx_in,self.csv_in,self.xlsx_out,self.csv_out]); file_menu.addSeparator(); file_menu.addAction(self.sign_out_a)
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.copy_a,self.paste_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a])
         data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
@@ -100,7 +104,7 @@ class MainWindow(QMainWindow):
         formula.addWidget(self.name_box); formula.addWidget(QLabel("fx")); formula.addWidget(self.formula_bar); layout.addLayout(formula)
         self.tabs=QTabWidget(); self.tabs.setDocumentMode(True); self.tabs.setMovable(True); self.tabs.currentChanged.connect(self._tab_changed)
         plus=QPushButton("+"); plus.clicked.connect(self._add_sheet); self.tabs.setCornerWidget(plus); layout.addWidget(self.tabs); self.setCentralWidget(root)
-        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.collaboration_status=QLabel("Collaboration: local"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.collaboration_status); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
+        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.autosave_status=QLabel("Recovery: ready"); self.collaboration_status=QLabel("Collaboration: local"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.autosave_status); status.addPermanentWidget(self.collaboration_status); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
 
     def _view(self, index):
         view=QTableView(); model=SpreadsheetTableModel(self.workbook.sheets[index], evaluator=self._evaluate, editable=self._can_edit()); view.setModel(model)
@@ -163,6 +167,7 @@ class MainWindow(QMainWindow):
             index=view.model().index(address.row,address.column); view.setCurrentIndex(index); view.scrollTo(index)
 
     def _new(self):
+        if not self._confirm_replace():return
         self._stop_collaboration(); self.workbook=self._owned_workbook("Untitled"); self.workbook.add_sheet("Sheet1"); self.access_role="owner"; self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.current_file_path=None; self.dirty=False; self._tabs(); self._title()
 
     def _open(self):
@@ -171,6 +176,7 @@ class MainWindow(QMainWindow):
             if not ok:path=""
         else:path,_=QFileDialog.getOpenFileName(self,"Open workbook","","AI Workbook (*.json)")
         if not path:return
+        if not self._confirm_replace():return
         try:
             if isinstance(self.storage,PostgresWorkbookStorage) and self.principal:
                 workbook=self.storage.load_workbook_for_user(path,self.principal.email)
@@ -182,31 +188,38 @@ class MainWindow(QMainWindow):
         self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate(); self.current_file_path=path; self.dirty=claimed; self._tabs(); self._title()
         if claimed:self.statusBar().showMessage("This legacy workbook is now assigned to you; save it to persist ownership.",5000)
         self._start_collaboration()
+        self._remember_recent(path)
 
     def _save(self):
-        if not self._can_edit():QMessageBox.warning(self,"Read only","Viewers cannot save changes to this workbook."); return
-        if not self.current_file_path:self._save_as(); return
+        if not self._can_edit():QMessageBox.warning(self,"Read only","Viewers cannot save changes to this workbook."); return False
+        if not self.current_file_path:return self._save_as()
         try:
             if isinstance(self.storage,PostgresWorkbookStorage) and self.principal:
                 self.storage.save_workbook_for_user(self.current_file_path,self.workbook,self.principal.email)
             else:self.storage.save_workbook(self.current_file_path,self.workbook)
-        except (OSError,PostgresStorageError) as exc:QMessageBox.warning(self,"Save failed",str(exc)); return
+        except (OSError,PostgresStorageError) as exc:QMessageBox.warning(self,"Save failed",str(exc)); return False
         self.dirty=False; self._title()
+        self.recovery.discard_for(self.workbook,self.current_file_path,self._recovery_identity())
+        if self.last_recovery_path:self.recovery.discard(self.last_recovery_path); self.last_recovery_path=None
+        self._remember_recent(self.current_file_path)
         self._start_collaboration()
+        return True
 
     def _save_as(self):
-        if not self._can_edit():return
+        if not self._can_edit():return False
         if isinstance(self.storage,PostgresWorkbookStorage):
             path,ok=QInputDialog.getText(self,"Save PostgreSQL workbook","Workbook key:",text=self.current_file_path or "")
             if not ok:path=""
-            if path:self.current_file_path=path.strip(); self._save()
+            if path:self.current_file_path=path.strip(); return self._save()
         else:
             path,_=QFileDialog.getSaveFileName(self,"Save workbook","","AI Workbook (*.json)")
-            if path:self.current_file_path=path if path.endswith(".json") else path+".json"; self._save()
+            if path:self.current_file_path=path if path.endswith(".json") else path+".json"; return self._save()
+        return False
 
     def _import(self,kind):
         pattern="Excel Workbook (*.xlsx)" if kind=="xlsx" else "CSV File (*.csv)"; path,_=QFileDialog.getOpenFileName(self,"Import","",pattern)
         if not path:return
+        if not self._confirm_replace():return
         try:self.workbook=(self.converter.import_xlsx(path) if kind=="xlsx" else self.converter.import_csv(path))
         except WorkbookConversionError as exc: QMessageBox.warning(self,"Import failed",str(exc)); return
         if self.principal:self.workbook.permissions=self.permission_service.assign_owner(self.workbook.permissions,self.principal.email)
@@ -348,6 +361,92 @@ class MainWindow(QMainWindow):
                 f"Registered custom functions: {', '.join(dialog.saved_functions)}",5000
             )
 
+    def _start_autosave(self):
+        self.autosave_timer=QTimer(self)
+        try:
+            enabled=autosave_enabled(); interval=autosave_interval_seconds()
+        except ValueError as exc:
+            self.autosave_status.setText("Recovery: config error")
+            self.statusBar().showMessage(str(exc),5000); return
+        if not enabled:
+            self.autosave_status.setText("Recovery: off"); return
+        self.autosave_timer.timeout.connect(self._autosave)
+        self.autosave_timer.start(interval*1000)
+
+    def _autosave(self):
+        if not self.dirty or not self._can_edit():return
+        try:self.last_recovery_path=self.recovery.snapshot(self.workbook,self.current_file_path,self._recovery_identity())
+        except (OSError,ValueError) as exc:
+            self.autosave_status.setText("Recovery: failed")
+            self.statusBar().showMessage(f"Recovery snapshot failed: {exc}",4000); return
+        self.autosave_status.setText("Recovery: saved")
+
+    def _offer_recovery(self):
+        candidates=self.recovery.candidates(self._recovery_identity())
+        if not candidates:return
+        candidate=candidates[0]
+        answer=QMessageBox.question(
+            self,"Recover unsaved workbook",
+            f"An autosave for '{candidate.workbook_name}' is available from {candidate.saved_at}. Recover it now?",
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+        )
+        if answer!=QMessageBox.StandardButton.Yes:return
+        try:workbook=self.recovery.restore(candidate)
+        except (OSError,ValueError) as exc:
+            QMessageBox.warning(self,"Recovery failed",str(exc)); return
+        role,_=self.permission_service.resolve_or_claim(self.principal.email,workbook) if self.principal else ("owner",False)
+        if role is None:
+            QMessageBox.warning(self,"Recovery denied","Your account cannot access this recovered workbook."); return
+        self.workbook=workbook; self.access_role=role; self.current_file_path=candidate.source_path
+        self.last_recovery_path=candidate.path
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
+        self.dirty=True; self._tabs(); self._title(); self.autosave_status.setText("Recovery: restored")
+
+    def _recovery_identity(self):
+        return self.principal.email if self.principal else "local"
+
+    def _recent_paths(self):
+        value=QSettings("AI Spreadsheet","AI Spreadsheet").value("recent_files",[])
+        return [str(item) for item in (value if isinstance(value,list) else [value]) if item]
+
+    def _remember_recent(self,path):
+        if isinstance(self.storage,PostgresWorkbookStorage):return
+        paths=[str(Path(path))]+[item for item in self._recent_paths() if item!=str(Path(path))]
+        QSettings("AI Spreadsheet","AI Spreadsheet").setValue("recent_files",paths[:8])
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self):
+        if not hasattr(self,"recent_menu"):return
+        self.recent_menu.clear(); paths=self._recent_paths()
+        if not paths:
+            action=self.recent_menu.addAction("No recent workbooks"); action.setEnabled(False); return
+        for path in paths:
+            action=self.recent_menu.addAction(Path(path).name)
+            action.setToolTip(path); action.triggered.connect(lambda _checked=False,p=path:self._open_recent(p))
+
+    def _open_recent(self,path):
+        if not Path(path).exists():
+            QMessageBox.warning(self,"Open Recent","The workbook no longer exists."); return
+        if not self._confirm_replace():return
+        try:workbook=self.storage.load_workbook(path)
+        except (OSError,ValueError) as exc:QMessageBox.warning(self,"Open failed",str(exc)); return
+        role,_=self.permission_service.resolve_or_claim(self.principal.email,workbook) if self.principal else ("owner",False)
+        if role is None:QMessageBox.warning(self,"Access denied","You do not have access to this workbook."); return
+        self.workbook=workbook; self.access_role=role; self.current_file_path=path
+        self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
+        self.dirty=False; self._tabs(); self._title(); self._remember_recent(path); self._start_collaboration()
+
+    def _confirm_replace(self):
+        if not self.dirty:return True
+        answer=QMessageBox.question(
+            self,"Unsaved changes","Save changes before replacing the current workbook?",
+            QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,
+        )
+        if answer==QMessageBox.StandardButton.Cancel:return False
+        if answer==QMessageBox.StandardButton.Save:return bool(self._save())
+        if self.last_recovery_path:self.recovery.discard(self.last_recovery_path); self.last_recovery_path=None
+        return True
+
     def _collaboration_key(self):
         if not self.current_file_path:return None
         return self.current_file_path if isinstance(self.storage,PostgresWorkbookStorage) else Path(self.current_file_path).stem
@@ -426,4 +525,13 @@ class MainWindow(QMainWindow):
         self._mark_dirty(); self.statusBar().showMessage(f"Live update: {sheet.name}!{address}",1800)
 
     def closeEvent(self,event):
+        if self.dirty:
+            answer=QMessageBox.question(
+                self,"Unsaved changes","Save changes before closing?",
+                QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel,
+            )
+            if answer==QMessageBox.StandardButton.Cancel:event.ignore(); return
+            if answer==QMessageBox.StandardButton.Save and not self._save():event.ignore(); return
+            if answer==QMessageBox.StandardButton.Discard and self.last_recovery_path:
+                self.recovery.discard(self.last_recovery_path); self.last_recovery_path=None
         self._stop_collaboration(); super().closeEvent(event)
