@@ -240,19 +240,21 @@ class SharingWorkflowService:
         role: Role = "viewer",
         workbook_link: str = "",
     ) -> Workbook:
+        previous = deepcopy(workbook.permissions)
         workbook.permissions = self.permission_service.invite_user_as_owner(
             permissions=workbook.permissions,
             actor_email=actor_email,
             user_email=target_email,
             role=role,
         )
-        self.email_service.send_workbook_invitation(
-            recipient_email=target_email,
-            workbook_name=workbook.name,
-            inviter_email=actor_email,
-            role=role,
-            workbook_link=workbook_link,
-        )
+        try:
+            self.email_service.send_workbook_invitation(
+                recipient_email=target_email, workbook_name=workbook.name,
+                inviter_email=actor_email, role=role, workbook_link=workbook_link,
+            )
+        except Exception:
+            workbook.permissions = previous
+            raise
         return workbook
 
     def grant_access(
@@ -263,32 +265,38 @@ class SharingWorkflowService:
         role: Role,
         workbook_link: str = "",
     ) -> Workbook:
+        previous = deepcopy(workbook.permissions)
         workbook.permissions = self.permission_service.invite_user_as_owner(
             permissions=workbook.permissions,
             actor_email=actor_email,
             user_email=target_email,
             role=role,
         )
-        self.email_service.send_access_granted(
-            recipient_email=target_email,
-            workbook_name=workbook.name,
-            granted_by_email=actor_email,
-            role=role,
-            workbook_link=workbook_link,
-        )
+        try:
+            self.email_service.send_access_granted(
+                recipient_email=target_email, workbook_name=workbook.name,
+                granted_by_email=actor_email, role=role, workbook_link=workbook_link,
+            )
+        except Exception:
+            workbook.permissions = previous
+            raise
         return workbook
 
     def revoke_access(self, workbook: Workbook, actor_email: str, target_email: str) -> Workbook:
+        previous = deepcopy(workbook.permissions)
         workbook.permissions = self.permission_service.revoke_access_as_owner(
             permissions=workbook.permissions,
             actor_email=actor_email,
             user_email=target_email,
         )
-        self.email_service.send_access_removed(
-            recipient_email=target_email,
-            workbook_name=workbook.name,
-            removed_by_email=actor_email,
-        )
+        try:
+            self.email_service.send_access_removed(
+                recipient_email=target_email, workbook_name=workbook.name,
+                removed_by_email=actor_email,
+            )
+        except Exception:
+            workbook.permissions = previous
+            raise
         return workbook
 
 

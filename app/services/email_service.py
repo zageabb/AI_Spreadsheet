@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage as SMTPEmailMessage
@@ -40,7 +41,7 @@ class EmailSettings:
 
     @classmethod
     def from_env(cls) -> "EmailSettings":
-        return cls(
+        settings = cls(
             provider=os.getenv("EMAIL_PROVIDER", "smtp").strip().lower(),
             from_email=os.getenv("EMAIL_FROM", "noreply@example.com").strip(),
             enabled=_env_flag("EMAIL_ENABLED", True),
@@ -54,6 +55,21 @@ class EmailSettings:
             api_token=os.getenv("EMAIL_API_TOKEN", "").strip(),
             api_timeout_seconds=int(os.getenv("EMAIL_API_TIMEOUT_SECONDS", "10")),
         )
+        settings.validate()
+        return settings
+
+    def validate(self) -> None:
+        if self.provider not in {"smtp", "api"}:
+            raise ValueError("EMAIL_PROVIDER must be either 'smtp' or 'api'.")
+        if "@" not in self.from_email:
+            raise ValueError("EMAIL_FROM must be a valid email address.")
+        if self.smtp_port <= 0 or self.api_timeout_seconds <= 0:
+            raise ValueError("Email port and timeout values must be positive.")
+        if self.enabled and not self.dev_mode:
+            if self.provider == "smtp" and not self.smtp_host:
+                raise ValueError("SMTP_HOST is required when SMTP delivery is enabled.")
+            if self.provider == "api" and not self.api_endpoint:
+                raise ValueError("EMAIL_API_ENDPOINT is required when API delivery is enabled.")
 
 
 class EmailProvider(Protocol):
@@ -93,13 +109,9 @@ class APIEmailProvider:
         self.settings = settings
 
     def send(self, message: OutboundEmail) -> None:
-        payload = (
-            "{"
-            f'"from":"{_json_escape(self.settings.from_email)}",'
-            f'"to":"{_json_escape(message.to_email)}",'
-            f'"subject":"{_json_escape(message.subject)}",'
-            f'"text":"{_json_escape(message.text_body)}"'
-            "}"
+        payload = json.dumps(
+            {"from": self.settings.from_email, "to": message.to_email,
+             "subject": message.subject, "text": message.text_body}
         ).encode("utf-8")
 
         headers = {"Content-Type": "application/json"}
@@ -246,6 +258,8 @@ class EmailNotificationService:
     def _send(self, message: OutboundEmail) -> None:
         if not self.settings.enabled:
             return
+        if "@" not in message.to_email or "\n" in message.to_email or "\r" in message.to_email:
+            raise ValueError("Recipient email address is invalid.")
         self.provider.send(message)
 
     def _build_provider(self, settings: EmailSettings) -> EmailProvider:
@@ -263,12 +277,3 @@ def _env_flag(name: str, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _json_escape(value: str) -> str:
-    return (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-    )

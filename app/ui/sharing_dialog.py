@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.workbook import Workbook
-from app.permissions.service import PermissionService
+from app.permissions.service import PermissionService, SharingWorkflowService
 
 
 class SharingDialog(QDialog):
@@ -32,11 +32,15 @@ class SharingDialog(QDialog):
         actor_email: str,
         permission_service: PermissionService,
         parent=None,
+        sharing_workflow: SharingWorkflowService | None = None,
     ) -> None:
         super().__init__(parent)
         self.workbook = workbook
         self.actor_email = actor_email
         self.permission_service = permission_service
+        self.sharing_workflow = sharing_workflow or SharingWorkflowService(
+            permission_service=permission_service
+        )
         self.changed = False
         self.setWindowTitle(f"Share — {workbook.name}")
         self.resize(560, 420)
@@ -91,13 +95,13 @@ class SharingDialog(QDialog):
 
     def _grant(self) -> None:
         try:
-            self.workbook.permissions = self.permission_service.invite_user_as_owner(
-                self.workbook.permissions,
+            self.sharing_workflow.grant_access(
+                self.workbook,
                 actor_email=self.actor_email,
-                user_email=self.email.text(),
+                target_email=self.email.text(),
                 role=self.role.currentText(),
             )
-        except (PermissionError, ValueError) as exc:
+        except (PermissionError, ValueError, OSError, RuntimeError) as exc:
             QMessageBox.warning(self, "Access not changed", str(exc))
             return
         self.changed = True
@@ -110,12 +114,12 @@ class SharingDialog(QDialog):
             return
         target = self.table.item(row, 0).text()
         try:
-            self.workbook.permissions = self.permission_service.revoke_access_as_owner(
-                self.workbook.permissions,
+            self.sharing_workflow.revoke_access(
+                self.workbook,
                 actor_email=self.actor_email,
-                user_email=target,
+                target_email=target,
             )
-        except (PermissionError, ValueError) as exc:
+        except (PermissionError, ValueError, OSError, RuntimeError) as exc:
             QMessageBox.warning(self, "Access not changed", str(exc))
             return
         self.changed = True

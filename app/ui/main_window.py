@@ -326,7 +326,9 @@ class MainWindow(QMainWindow):
 
     def _share_workbook(self):
         if not self.principal or self.access_role!="owner":return
-        dialog=SharingDialog(self.workbook,self.principal.email,self.permission_service,self)
+        dialog=SharingDialog(
+            self.workbook,self.principal.email,self.permission_service,parent=self
+        )
         dialog.exec()
         if dialog.changed:
             self.access_role=self._resolve_access(self.workbook) or "viewer"

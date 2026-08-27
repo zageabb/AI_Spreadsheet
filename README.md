@@ -177,6 +177,8 @@ Environment variables for auth are configured via `.env`:
 - `AUTH_IDENTITY_PROVIDER` (`local` scaffold default)
 - `AUTH_SESSION_SECRET` (required for token signing)
 - `AUTH_SESSION_TTL_SECONDS`
+- `AUTH_RESET_SECRET` (optional separate reset-token signing secret)
+- `AUTH_RESET_TTL_SECONDS` (defaults to 30 minutes)
 - `AUTH_PASSWORD_ITERATIONS`
 - `AUTH_PASSWORD_PEPPER` (optional)
 - `AUTH_USER_STORE` (local hashed identity file; defaults to `data/users.json`)
@@ -191,7 +193,7 @@ Workbook sharing and role checks are handled separately in `app/permissions/serv
 
 Roles are limited to `owner`, `editor`, and `viewer`, and are intended to be reusable across both JSON-local and PostgreSQL-backed modes.
 
-## Email notifications (sharing + auth scaffold)
+## Email notifications and password recovery
 
 The email notification module is implemented in `app/services/email_service.py` and designed to stay swappable across providers.
 
@@ -200,7 +202,7 @@ Capabilities in this stage:
 - workbook invitation email
 - access granted email
 - access removed email
-- optional password reset email scaffold
+- expiring password reset email and desktop reset flow
 
 Text templates are in `app/services/email_templates/`:
 
@@ -246,13 +248,18 @@ Use `SharingWorkflowService` (`app/permissions/service.py`) to keep authorizatio
 
 ### Usage from auth workflows
 
-`AuthService.send_password_reset_email(...)` is a scaffold helper that:
+`AuthService.send_password_reset_email(...)` and `reset_password(...)` provide a complete local reset flow that:
 
 1. validates that the account exists
-2. creates an opaque reset token
+2. creates a signed, expiring reset token tied to the current password hash
 3. sends password reset instructions through `EmailNotificationService`
+4. validates the token and replaces the stored password hash
 
-Persisting and validating reset tokens is intentionally left for a later stage.
+A successful password change invalidates the token, preventing replay without storing reset tokens. The desktop sign-in dialog includes request-token and apply-token actions. In development mode, messages are captured and logged locally; configure SMTP or the generic API provider for delivery.
+
+### Packaging notes
+
+Include `app/services/email_templates/` in desktop packages. Production builds should set `APP_ENV=production`, disable `EMAIL_DEV_MODE`, provide the sender and provider credentials through the runtime environment, and use signing secrets with at least 32 random characters. Do not bundle `.env`, user stores, or provider credentials in an installer.
 
 ## PostgreSQL authorization support
 

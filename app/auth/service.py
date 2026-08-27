@@ -47,6 +47,9 @@ class UserRepository(Protocol):
     def get_user_by_email(self, email: str) -> UserRecord | None:
         """Return user for the email when present."""
 
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        """Replace the password hash for an existing user."""
+
 
 class InMemoryUserRepository:
     """Simple repository scaffold for non-database auth workflows."""
@@ -65,6 +68,13 @@ class InMemoryUserRepository:
 
     def get_user_by_email(self, email: str) -> UserRecord | None:
         return self._users_by_email.get(_normalize_email(email))
+
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        for user in self._users_by_email.values():
+            if user.user_id == user_id:
+                user.password_hash = password_hash
+                return
+        raise ValueError("Password reset token is no longer valid.")
 
 
 class JsonUserRepository:
@@ -92,6 +102,16 @@ class JsonUserRepository:
     def get_user_by_email(self, email: str) -> UserRecord | None:
         with self._lock:
             return self._read_users().get(_normalize_email(email))
+
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        with self._lock:
+            users = self._read_users()
+            for user in users.values():
+                if user.user_id == user_id:
+                    user.password_hash = password_hash
+                    self._write_users(users)
+                    return
+        raise ValueError("Password reset token is no longer valid.")
 
     def has_users(self) -> bool:
         """Return whether at least one local account has been registered."""
@@ -188,6 +208,16 @@ class PostgresUserRepository:
                     email=str(row["email"]),
                     password_hash=str(row["password_hash"] or ""),
                 )
+
+    def update_password(self, user_id: str, password_hash: str) -> None:
+        with self.db.transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET password_hash = %s WHERE id = %s RETURNING id",
+                    (password_hash, user_id),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("Password reset token is no longer valid.")
 
 
 class PasswordHasher:
@@ -298,6 +328,65 @@ class SessionTokenManager:
         return base64.urlsafe_b64encode(digest).decode("ascii")
 
 
+class PasswordResetTokenManager:
+    """Issue expiring reset tokens invalidated by a successful password change."""
+
+    def __init__(self, secret: str | None = None, ttl_seconds: int | None = None) -> None:
+        configured = secret if secret is not None else os.getenv("AUTH_RESET_SECRET", "")
+        if not configured:
+            configured = os.getenv("AUTH_SESSION_SECRET", "")
+        if not configured:
+            raise ValueError("AUTH_RESET_SECRET or AUTH_SESSION_SECRET must be configured.")
+        self.secret = configured.encode("utf-8")
+        self.ttl_seconds = ttl_seconds if ttl_seconds is not None else int(
+            os.getenv("AUTH_RESET_TTL_SECONDS", "1800")
+        )
+        if self.ttl_seconds <= 0:
+            raise ValueError("AUTH_RESET_TTL_SECONDS must be a positive integer.")
+
+    def issue_token(self, user: UserRecord) -> str:
+        payload = {
+            "purpose": "password_reset",
+            "user_id": user.user_id,
+            "email": user.email,
+            "exp": int(time.time()) + self.ttl_seconds,
+            "password_tag": self._password_tag(user.password_hash),
+            "nonce": secrets.token_urlsafe(12),
+        }
+        encoded = base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
+        signature = base64.urlsafe_b64encode(
+            hmac.new(self.secret, encoded.encode("ascii"), hashlib.sha256).digest()
+        ).decode("ascii")
+        return f"{encoded}.{signature}"
+
+    def validate_token(self, token: str, user: UserRecord) -> bool:
+        try:
+            encoded, signature = token.split(".", 1)
+            expected = base64.urlsafe_b64encode(
+                hmac.new(self.secret, encoded.encode("ascii"), hashlib.sha256).digest()
+            ).decode("ascii")
+            if not hmac.compare_digest(signature, expected):
+                return False
+            payload = json.loads(base64.urlsafe_b64decode(encoded.encode("ascii")))
+            return (
+                payload.get("purpose") == "password_reset"
+                and payload.get("user_id") == user.user_id
+                and payload.get("email") == user.email
+                and int(payload.get("exp", 0)) > int(time.time())
+                and hmac.compare_digest(
+                    str(payload.get("password_tag", "")),
+                    self._password_tag(user.password_hash),
+                )
+            )
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return False
+
+    def _password_tag(self, password_hash: str) -> str:
+        return hmac.new(self.secret, password_hash.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 class IdentityProvider(Protocol):
     """Abstraction seam for future external identity providers."""
 
@@ -341,11 +430,15 @@ class AuthService:
         password_hasher: PasswordHasher | None = None,
         session_manager: SessionTokenManager | None = None,
         identity_provider: IdentityProvider | None = None,
+        reset_token_manager: PasswordResetTokenManager | None = None,
     ) -> None:
         self.repository = repository or InMemoryUserRepository()
         self.password_hasher = password_hasher or PasswordHasher()
         self.identity_provider = identity_provider or LocalIdentityProvider(self.repository, self.password_hasher)
         self.session_manager = session_manager or SessionTokenManager()
+        self.reset_token_manager = reset_token_manager or PasswordResetTokenManager(
+            secret=self.session_manager.secret.decode("utf-8")
+        )
 
     def register_user(self, email: str, password: str) -> UserRecord:
         """Create a user identity from email/password credentials."""
@@ -363,15 +456,13 @@ class AuthService:
         reset_link_base: str = "",
     ) -> str:
         """
-        Optional password reset scaffold for future server/UI integration.
-
-        Returns an opaque token so a future reset-token repository can persist it.
+        Send an expiring password reset token and return it for dev/test tooling.
         """
         user = self.repository.get_user_by_email(email)
         if user is None:
             raise ValueError("No user exists for this email address.")
 
-        token = secrets.token_urlsafe(24)
+        token = self.reset_token_manager.issue_token(user)
         notifier = email_service or EmailNotificationService()
         notifier.send_password_reset_scaffold(
             recipient_email=user.email,
@@ -379,6 +470,14 @@ class AuthService:
             reset_link_base=reset_link_base,
         )
         return token
+
+    def reset_password(self, email: str, token: str, new_password: str) -> None:
+        """Validate a reset token and atomically replace the user's password hash."""
+        user = self.repository.get_user_by_email(email)
+        if user is None or not self.reset_token_manager.validate_token(token.strip(), user):
+            raise ValueError("Password reset token is invalid or expired.")
+        _validate_password(new_password)
+        self.repository.update_password(user.user_id, self.password_hasher.hash_password(new_password))
 
     def validate_session(self, token: str) -> SessionPrincipal | None:
         """Validate token and return principal when token is valid."""
@@ -414,6 +513,9 @@ def create_auth_service() -> AuthService:
     return AuthService(
         repository=repository,
         session_manager=SessionTokenManager(secret=session_secret),
+        reset_token_manager=PasswordResetTokenManager(
+            secret=os.getenv("AUTH_RESET_SECRET", "").strip() or session_secret
+        ),
     )
 
 

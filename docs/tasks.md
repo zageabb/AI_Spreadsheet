@@ -98,10 +98,10 @@
 - [x] Basic conflict-handling scaffold
 
 ## Milestone 8 — Email notifications and hardening
-- [ ] Invite/access emails
-- [ ] Access removed emails
-- [ ] Password reset scaffold
-- [ ] Tests
-- [ ] Validation
-- [ ] README cleanup
-- [ ] Packaging notes
+- [x] Invite/access emails
+- [x] Access removed emails
+- [x] Expiring, single-use password reset flow
+- [x] Tests
+- [x] Validation
+- [x] README cleanup
+- [x] Packaging notes
