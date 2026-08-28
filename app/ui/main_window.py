@@ -44,6 +44,7 @@ from app.ui.ai_assistant_dock import AIAssistantDock
 from app.ui.find_replace_dialog import FindReplaceDialog
 from app.ui.undo_commands import WorkbookMetadataCommand, WorksheetStateCommand
 from app.ui.excel_features_dialogs import ChartDialog, ConditionalFormatDialog, NamedRangesDialog
+from app.ui.data_connection_dialog import DataConnectionDialog
 
 
 class CollaborationBridge(QObject):
@@ -121,6 +122,7 @@ class MainWindow(QMainWindow):
         self.transform_a=self._make_action("Transform Data","Ctrl+Shift+T",self._transform_data)
         self.connect_csv_a=self._make_action("Connect CSV",None,self._connect_csv)
         self.connect_sqlite_a=self._make_action("Connect SQLite",None,self._connect_sqlite)
+        self.connections_a=self._make_action("Data Connections","Ctrl+Shift+D",self._manage_connections)
         self.refresh_data_a=self._make_action("Refresh Data","Ctrl+Alt+R",self._refresh_data)
         self.share_a=self._make_action("Share Workbook",None,self._share_workbook)
         self.custom_functions_a=self._make_action("Custom Python Functions",None,self._custom_functions)
@@ -133,7 +135,7 @@ class MainWindow(QMainWindow):
         edit_menu=self.menuBar().addMenu("Edit"); edit_menu.addActions([self.undo_a,self.redo_a]); edit_menu.addSeparator(); edit_menu.addActions([self.copy_a,self.paste_a,self.clear_a,self.find_a,self.edit_cell_a]); edit_menu.addSeparator(); edit_menu.addActions([self.first_cell_a,self.last_cell_a])
         format_menu=self.menuBar().addMenu("Format"); format_menu.addActions([self.bold_a,self.italic_a,self.underline_a,self.fill_a,self.font_colour_a]); format_menu.addSeparator(); format_menu.addActions([self.conditional_format_a,self.clear_conditional_a])
         sheet_menu=self.menuBar().addMenu("Sheet"); sheet_menu.addActions([self.add_a,self.rename_a,self.delete_a]); sheet_menu.addSeparator(); sheet_menu.addActions([self.insert_rows_a,self.delete_rows_a,self.insert_columns_a,self.delete_columns_a])
-        data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.sort_asc_a,self.sort_desc_a,self.filter_a,self.clear_filter_a]); data_menu.addSeparator(); data_menu.addActions([self.named_ranges_a,self.chart_a]); data_menu.addSeparator(); data_menu.addActions([self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
+        data_menu=self.menuBar().addMenu("Data"); data_menu.addActions([self.sort_asc_a,self.sort_desc_a,self.filter_a,self.clear_filter_a]); data_menu.addSeparator(); data_menu.addActions([self.named_ranges_a,self.chart_a]); data_menu.addSeparator(); data_menu.addActions([self.connections_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]); data_menu.addSeparator(); data_menu.addAction(self.transform_a)
         access_menu=self.menuBar().addMenu("Access"); access_menu.addAction(self.share_a)
         tools_menu=self.menuBar().addMenu("Tools"); tools_menu.addActions([self.ai_a,self.custom_functions_a])
         bar=QToolBar("Workbook"); bar.setMovable(False); bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -146,7 +148,7 @@ class MainWindow(QMainWindow):
         formula.addWidget(self.name_box); formula.addWidget(QLabel("fx")); formula.addWidget(self.formula_bar); layout.addLayout(formula)
         self.tabs=QTabWidget(); self.tabs.setDocumentMode(True); self.tabs.setMovable(True); self.tabs.currentChanged.connect(self._tab_changed)
         plus=QPushButton("+"); plus.clicked.connect(self._add_sheet); self.tabs.setCornerWidget(plus); layout.addWidget(self.tabs); self.setCentralWidget(root)
-        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.autosave_status=QLabel("Recovery: ready"); self.collaboration_status=QLabel("Collaboration: local"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.autosave_status); status.addPermanentWidget(self.collaboration_status); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
+        status=QStatusBar(); self.cell_status=QLabel("Cell: A1"); self.selection_status=QLabel("Selection: 1"); self.autosave_status=QLabel("Recovery: ready"); self.data_status=QLabel("Data: local"); self.collaboration_status=QLabel("Collaboration: local"); self.identity_status=QLabel(self._identity_label()); status.addPermanentWidget(self.autosave_status); status.addPermanentWidget(self.data_status); status.addPermanentWidget(self.collaboration_status); status.addPermanentWidget(self.identity_status); status.addPermanentWidget(self.cell_status); status.addPermanentWidget(self.selection_status); self.setStatusBar(status)
 
     def _view(self, index):
         view=QTableView(); model=SpreadsheetTableModel(self.workbook.sheets[index], evaluator=self._evaluate, editable=self._can_edit()); view.setModel(model)
@@ -520,24 +522,36 @@ class MainWindow(QMainWindow):
         table,ok=QInputDialog.getItem(self,"Connect SQLite","Table:",tables,0,False)
         if ok:self._load_source(DataSourceSpec("sqlite",path,{"table":table,"limit":100000}))
 
+    def _manage_connections(self):
+        from copy import deepcopy
+        before=deepcopy(self.workbook.metadata); profiles=self.workbook.metadata.get("data_connections",[])
+        dialog=DataConnectionDialog(profiles if isinstance(profiles,list) else [],self.connectors,self)
+        if not dialog.exec():return
+        self.workbook.metadata["data_connections"]=dialog.profiles; after=deepcopy(self.workbook.metadata)
+        if before!=after:
+            self.undo_stack.push(WorkbookMetadataCommand("Edit data connections",self.workbook,before,after,self._refresh_after_undo)); self._refresh_after_undo()
+        if dialog.selected_spec:self._load_source(dialog.selected_spec)
+
     def _load_source(self,source):
+        self.data_status.setText("Data: loading")
         try:rows=self.connectors.load(source)
-        except DataConnectorError as exc:QMessageBox.warning(self,"Data connection failed",str(exc)); return
+        except DataConnectorError as exc:self.data_status.setText("Data: failed"); QMessageBox.warning(self,"Data connection failed",str(exc)); return
         sheet=self.workbook.get_active_sheet(); rows_to_worksheet(rows,sheet)
         sheet.metadata["data_source"]=source.to_dict(); sheet.metadata["transformations"]=[]
         self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
-        self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Loaded {len(rows):,} rows",3000)
+        self._mark_dirty(); self._tabs(); self.data_status.setText(f"Data: {source.kind} · {len(rows):,} rows"); self.statusBar().showMessage(f"Loaded {len(rows):,} rows",3000)
 
     def _refresh_data(self):
         sheet=self.workbook.get_active_sheet(); payload=sheet.metadata.get("data_source")
         if not isinstance(payload,dict):QMessageBox.information(self,"Refresh Data","The active sheet has no refreshable data source."); return
+        self.data_status.setText("Data: refreshing")
         try:
             source=DataSourceSpec.from_dict(payload); rows=self.connectors.load(source)
             steps=sheet.metadata.get("transformations",[])
             result=TransformationPipeline.from_dicts(steps).apply(rows)
-        except (DataConnectorError,KeyError,TypeError,ValueError) as exc:QMessageBox.warning(self,"Refresh failed",str(exc)); return
+        except (DataConnectorError,KeyError,TypeError,ValueError) as exc:self.data_status.setText("Data: failed"); QMessageBox.warning(self,"Refresh failed",str(exc)); return
         rows_to_worksheet(result,sheet); self.calculation=WorkbookCalculationService(self.workbook,self.engine); self.calculation.recalculate()
-        self._mark_dirty(); self._tabs(); self.statusBar().showMessage(f"Refreshed {len(result):,} rows from {len(rows):,} source rows",3500)
+        self._mark_dirty(); self._tabs(); self.data_status.setText(f"Data: refreshed · {len(result):,} rows"); self.statusBar().showMessage(f"Refreshed {len(result):,} rows from {len(rows):,} source rows",3500)
 
     def _unique(self,base,exclude=None):
         names={s.name for i,s in enumerate(self.workbook.sheets) if i!=exclude}; n=2
@@ -572,7 +586,7 @@ class MainWindow(QMainWindow):
                        self.insert_rows_a,self.delete_rows_a,self.insert_columns_a,self.delete_columns_a,
                        self.sort_asc_a,self.sort_desc_a,self.bold_a,self.italic_a,self.underline_a,self.fill_a,
                        self.font_colour_a,self.conditional_format_a,self.clear_conditional_a,self.named_ranges_a,self.chart_a,
-                       self.transform_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]:action.setEnabled(editable)
+                       self.transform_a,self.connections_a,self.connect_csv_a,self.connect_sqlite_a,self.refresh_data_a]:action.setEnabled(editable)
         self.undo_a.setEnabled(editable and self.undo_stack.canUndo()); self.redo_a.setEnabled(editable and self.undo_stack.canRedo())
         self.share_a.setEnabled(self.access_role=="owner")
         self.formula_bar.setReadOnly(not editable)

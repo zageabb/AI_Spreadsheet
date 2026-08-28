@@ -1,6 +1,6 @@
 # AI Spreadsheet
 
-AI Spreadsheet is a **desktop-first Python spreadsheet application scaffold** built with **PySide6** and modular architecture.
+AI Spreadsheet is a **desktop-first Python spreadsheet application** built with **PySide6** and modular architecture.
 
 > ⚠️ **Development status:** The desktop spreadsheet, authentication, permissions and controlled live collaboration are functional. Email delivery and several advanced Excel features remain staged work.
 
@@ -26,7 +26,7 @@ AI_Spreadsheet/
 └── tests/
 ```
 
-## MVP scaffold includes
+## Application capabilities
 
 - Desktop shell (`PySide6`) with:
   - main window
@@ -34,7 +34,7 @@ AI_Spreadsheet/
   - toolbar groups for file, edit and formatting actions
   - formula bar with active-cell name box
   - worksheet grid with row/column headers
-  - sheet tabs with add/rename/duplicate/delete actions
+  - sheet tabs with add/rename/delete actions
   - status bar with cell position and edit mode indicators
   - keyboard shortcuts for common actions (save, copy/paste, undo/redo, find, cell editing and navigation)
   - reversible find/replace, row/column operations, range sorting and non-destructive row filtering
@@ -50,20 +50,17 @@ AI_Spreadsheet/
   - export `.xlsx` with sheet name sanitization for Excel constraints
   - import `.csv` into a single worksheet
   - export active sheet to `.csv`
-- Starter formula engine with:
+- Extensible formula engine with:
   - same-sheet references (e.g., `=A1+B2`)
   - dynamic discovery of built-in `builtin_*.py` formula modules
   - runtime plugin function loading from `plugins/`
 - Plugin formula loading from `plugins/`.
-- Placeholder/scaffold modules for:
-  - Authentication flows
-  - Collaboration server
-  - Email notifications
+- Functional authentication, permissions, email notification and controlled collaboration modules.
 
 
 ## Reliability and hardening status
 
-The current scaffold includes lightweight but realistic automated coverage for core reliability paths:
+The application includes automated coverage for core reliability paths:
 
 - formula engine parsing/evaluation and plugin loading (`tests/test_formula_engine.py`)
 - JSON workbook storage validation and round-trip persistence (`tests/test_json_storage.py`)
@@ -289,7 +286,7 @@ Use **Tools → Custom Python Functions** to write an uppercase function such as
 
 Dirty editable workbooks receive timed local recovery snapshots without overwriting their primary JSON or PostgreSQL record. Recovery is scoped to the signed-in identity and offered at the next startup. The desktop also prompts before closing with unsaved changes, shows recovery state in the status bar, and provides **File → Open Recent** for local JSON workbooks.
 
-Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.13.0-rc1`.
+Cross-platform PyInstaller configuration, SHA-256 release archives and a Windows/macOS/Ubuntu GitHub Actions build matrix are included. See [`docs/desktop_release.md`](docs/desktop_release.md) for configuration and build commands. Current release version: `0.14.0-rc1`.
 
 ## Editing essentials
 
@@ -298,6 +295,10 @@ Phase 12 adds workbook-scoped undo/redo, modeless find and replace, clear/insert
 ## Advanced Excel compatibility
 
 Phase 13 adds calculated named ranges, desktop-rendered conditional formatting, native column/line/pie chart creation for XLSX, and statistical, rounding, text-search and working-day formulas. Imported objects outside the editable subset continue through the verified OOXML preservation layer. See [`docs/excel_compatibility_phase13.md`](docs/excel_compatibility_phase13.md).
+
+## Secure analytical data connections
+
+Phase 14 adds authenticated REST and read-only PostgreSQL analytical connections through **Data → Data Connections**. Profiles can be previewed, saved without credentials, loaded into the active worksheet and refreshed with the recorded transformation pipeline replayed. Secrets are resolved from named environment references and are never written into workbook metadata. See [`docs/data_connections_phase14.md`](docs/data_connections_phase14.md).
 
 ## Grounded AI assistant
 

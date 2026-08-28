@@ -17,7 +17,7 @@
 - [x] Persist applied transformation steps in worksheet metadata
 - [x] Add refreshable CSV and read-only SQLite connectors
 - [x] Reload connected sources and replay saved transformation pipelines
-- [ ] Add authenticated REST API and PostgreSQL analytical connectors
+- [x] Add authenticated REST API and PostgreSQL analytical connectors
 - [x] Preserve validation rules and tables in XLSX round trips
 - [x] Preserve supported charts, drawings, images and package relationships through an OOXML template layer
 
@@ -77,58 +77,68 @@
 - [x] Statistical, rounding, text-search and working-day formulas
 - [x] Compatibility documentation and regression tests
 
+## Phase 14 — Secure analytical data connections
+- [x] Authenticated, size-limited HTTPS REST connector with JSON-path extraction
+- [x] Read-only PostgreSQL analytical connector with query and statement limits
+- [x] Environment-resolved credential references; no workbook secrets
+- [x] Context Studio connection profile, preview and load dialog
+- [x] Persist secret-free connection definitions in workbook metadata
+- [x] Refresh status and deterministic transformation replay
+- [x] Reject embedded tokens, passwords and privileged SQL operations
+- [x] Reconcile completed legacy milestones and add regression tests
+
 ## Milestone 1 — MVP desktop spreadsheet
-- [ ] Bootstrap repository structure
-- [ ] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`
-- [ ] Build PySide6 desktop shell
-- [ ] Add menu bar, toolbar/ribbon, formula bar, worksheet grid, tabs, status bar
-- [ ] Create workbook/sheet/cell models
-- [ ] Implement JSON storage adapter
-- [ ] Load/save sample workbook
-- [ ] Bind worksheet grid to workbook data
-- [ ] Add basic formatting support
+- [x] Bootstrap repository structure
+- [x] Add `requirements.txt`, `.gitignore`, `.env.example`, `README.md`
+- [x] Build PySide6 desktop shell
+- [x] Add menu bar, toolbar/ribbon, formula bar, worksheet grid, tabs, status bar
+- [x] Create workbook/sheet/cell models
+- [x] Implement JSON storage adapter
+- [x] Load/save sample workbook
+- [x] Bind worksheet grid to workbook data
+- [x] Add basic formatting support
 
 ## Milestone 2 — Formula engine and plugins
-- [ ] Build formula parser/evaluator foundation
-- [ ] Support cell references like `A1`
-- [ ] Implement starter function set:
-  - [ ] SUM
-  - [ ] AVERAGE
-  - [ ] MIN
-  - [ ] MAX
-  - [ ] COUNT
-  - [ ] IF
-  - [ ] AND
-  - [ ] OR
-  - [ ] NOT
-  - [ ] ROUND
-  - [ ] ABS
-  - [ ] CONCAT
-  - [ ] LEFT
-  - [ ] RIGHT
-  - [ ] LEN
-- [ ] Load built-in formulas dynamically
-- [ ] Add custom plugin discovery from `plugins/`
+- [x] Build formula parser/evaluator foundation
+- [x] Support cell references like `A1`
+- [x] Implement starter function set:
+  - [x] SUM
+  - [x] AVERAGE
+  - [x] MIN
+  - [x] MAX
+  - [x] COUNT
+  - [x] IF
+  - [x] AND
+  - [x] OR
+  - [x] NOT
+  - [x] ROUND
+  - [x] ABS
+  - [x] CONCAT
+  - [x] LEFT
+  - [x] RIGHT
+  - [x] LEN
+- [x] Load built-in formulas dynamically
+- [x] Add custom plugin discovery from `plugins/`
 
 ## Milestone 3 — Workbook actions and formatting
-- [ ] New workbook
-- [ ] Open workbook
-- [ ] Save
-- [ ] Save as
-- [ ] Add sheet
-- [ ] Rename sheet
-- [ ] Delete sheet
+- [x] New workbook
+- [x] Open workbook
+- [x] Save
+- [x] Save as
+- [x] Add sheet
+- [x] Rename sheet
+- [x] Delete sheet
 - [ ] Duplicate sheet
 - [ ] Borders
-- [ ] Conditional formatting first version
+- [x] Conditional formatting first version
 
 ## Milestone 4 — Excel and CSV compatibility
-- [ ] Import `.xlsx`
-- [ ] Export `.xlsx`
-- [ ] Import `.csv`
-- [ ] Export `.csv`
-- [ ] Preserve formulas where practical
-- [ ] Preserve basic formatting where practical
+- [x] Import `.xlsx`
+- [x] Export `.xlsx`
+- [x] Import `.csv`
+- [x] Export `.csv`
+- [x] Preserve formulas where practical
+- [x] Preserve basic formatting where practical
 
 ## Milestone 5 — Authentication and permissions
 - [x] Email login
